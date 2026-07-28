@@ -24,7 +24,7 @@ st.set_page_config(
 )
 
 st.title("📐 AI Chuyển Đề Bài Hình Học Sang Hình Vẽ TikZ")
-st.markdown("Made by penqwinn")
+st.markdown("Made by levu")
 
 # ==========================================
 # 2. CẤU HÌNH API KEY TẠI SIDEBAR
