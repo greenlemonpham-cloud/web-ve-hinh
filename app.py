@@ -26,10 +26,24 @@ st.set_page_config(
 )
 
 st.title("📐 AI Chuyển Đề Bài Hình Học Sang Hình Vẽ TikZ")
-st.markdown("Made by levu")
+st.markdown("Made by levu | **Có tính năng đếm ngược thời gian chờ Quota API**")
 
 # ==========================================
-# 2. CẤU HÌNH API KEY & ĐỊNH DẠNG TẠI SIDEBAR
+# 2. KHỞI TẠO SESSION STATE QUẢN LÝ THỜI GIAN
+# ==========================================
+if "paste_key" not in st.session_state:
+    st.session_state["paste_key"] = 0
+if "rendered_image" not in st.session_state:
+    st.session_state["rendered_image"] = None
+if "tikz_code" not in st.session_state:
+    st.session_state["tikz_code"] = ""
+if "render_mime" not in st.session_state:
+    st.session_state["render_mime"] = "image/png"
+if "cooldown_until" not in st.session_state:
+    st.session_state["cooldown_until"] = 0  # Timestamp thời điểm hết Cooldown
+
+# ==========================================
+# 3. CẤU HÌNH API KEY & SIDEBAR
 # ==========================================
 st.sidebar.header("⚙️ Cấu hình Hệ thống")
 
@@ -48,7 +62,6 @@ if input_key:
 
 api_key = st.session_state["user_api_key"]
 
-# [MỤC 2] Tùy chọn định dạng đầu ra (PNG hoặc SVG)
 render_format = st.sidebar.selectbox(
     "🖼️ Định dạng ảnh đầu ra:",
     options=["png", "svg"],
@@ -56,13 +69,36 @@ render_format = st.sidebar.selectbox(
     help="Chọn SVG để có chất lượng ảnh vector nét tuyệt đối khi chèn vào đề thi Word/LaTeX"
 )
 
+# Hiển thị trạng thái thời gian chờ ở Sidebar
+current_now = time.time()
+if st.session_state["cooldown_until"] > current_now:
+    remaining_secs = int(st.session_state["cooldown_until"] - current_now)
+    st.sidebar.warning(f"⏳ Cần chờ: **{remaining_secs} giây** để gửi yêu cầu tiếp theo.")
+else:
+    st.sidebar.success("🟢 API Sẵn sàng sử dụng!")
+
 @st.cache_resource
 def get_gemini_client(key: str):
     return genai.Client(api_key=key)
 
 # ==========================================
-# 3. HÀM RENDER TIKZ & AI
+# 4. HÀM ĐẾM NGƯỢC & RENDER TIKZ
 # ==========================================
+def run_cooldown_countdown(seconds: int = 60, message: str = "Đang chờ hồi hạn mức (Quota) từ Google"):
+    """Hàm chạy thanh đếm ngược thời gian thực trên Streamlit UI"""
+    st.session_state["cooldown_until"] = time.time() + seconds
+    progress_bar = st.progress(1.0)
+    status_text = st.empty()
+    
+    for remaining in range(seconds, 0, -1):
+        percent = remaining / seconds
+        progress_bar.progress(percent)
+        status_text.warning(f"⏳ **{message}:** Còn lại **{remaining} giây**...")
+        time.sleep(1)
+        
+    progress_bar.empty()
+    status_text.success("✅ Đã hết thời gian chờ! Bạn có thể bấm gửi lại ngay.")
+
 def clean_tikz_code(raw_text: str) -> str:
     match_codeblock = re.search(r"\x60{3}(?:latex|tikz)?\n(.*?)\x60{3}", raw_text, re.DOTALL)
     text = match_codeblock.group(1).strip() if match_codeblock else raw_text.strip()
@@ -84,11 +120,6 @@ def clean_tikz_code(raw_text: str) -> str:
     return clean_body
 
 def render_tikz(tikz_code: str, output_format: str = "png") -> tuple[bytes | None, str | None]:
-    """
-    Biên dịch TikZ qua Kroki API.
-    - Hỗ trợ định dạng PNG và SVG (Mục 2)
-    - Đọc chi tiết nguyên nhân lỗi từ Server Kroki (Mục 5)
-    """
     full_doc = f"""\\documentclass[tikz,border=5pt]{{standalone}}
 \\usepackage{{amsmath,amssymb}}
 \\usetikzlibrary{{calc,arrows,arrows.meta,intersections,shapes,patterns,angles,quotes}}
@@ -108,7 +139,6 @@ def render_tikz(tikz_code: str, output_format: str = "png") -> tuple[bytes | Non
                 return response.read(), None
             return None, f"Lỗi Kroki: HTTP {response.status}"
     except urllib.error.HTTPError as e:
-        # [MỤC 5] Đọc thông báo lỗi cú pháp chi tiết từ Server Kroki
         try:
             error_details = e.read().decode('utf-8', errors='ignore')
             clean_err = re.sub(r'<[^>]+>', '', error_details).strip()
@@ -119,15 +149,14 @@ def render_tikz(tikz_code: str, output_format: str = "png") -> tuple[bytes | Non
         return None, f"Lỗi kết nối Render: {e}"
 
 def generate_fast(client, contents_payload):
-    """
-    Hàm gọi AI xử lý danh sách payload (ảnh + prompt hoặc prompt điều chỉnh)
-    """
     fast_models = [
         "gemini-2.0-flash",
         "gemini-2.0-flash-lite",
     ]
 
     error_logs = []
+    hit_rate_limit = False
+
     for model_name in fast_models:
         try:
             response = client.models.generate_content(
@@ -135,31 +164,22 @@ def generate_fast(client, contents_payload):
                 contents=contents_payload,
             )
             if response and response.text:
-                return response.text, None
+                return response.text, None, False
         except Exception as e:
             err_msg = str(e)
             if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
-                error_logs.append(f"• {model_name}: ⚠️ Đã hết hạn mức Free Quota của Google cho Key này.")
-                time.sleep(2)
+                hit_rate_limit = True
+                error_logs.append(f"• {model_name}: ⚠️ Đã vượt quá giới hạn lượt gọi trong phút (Free Quota).")
             else:
-                error_logs.append(f"• {model_name}: {err_msg}")
+                error_logs.append(f"• {model_name}: {err_msg[:120]}")
             continue
 
     detailed_error = "\n".join(error_logs)
-    return None, f"❌ AI chưa thể xử lý. Chi tiết lỗi từ Google API:\n{detailed_error}"
+    return None, f"❌ AI chưa thể xử lý. Chi tiết lỗi từ Google API:\n{detailed_error}", hit_rate_limit
 
 # ==========================================
-# 4. LUỒNG XỬ LÝ CHÍNH
+# 5. LUỒNG XỬ LÝ CHÍNH
 # ==========================================
-if "paste_key" not in st.session_state:
-    st.session_state["paste_key"] = 0
-if "rendered_image" not in st.session_state:
-    st.session_state["rendered_image"] = None
-if "tikz_code" not in st.session_state:
-    st.session_state["tikz_code"] = ""
-if "render_mime" not in st.session_state:
-    st.session_state["render_mime"] = "image/png"
-
 if api_key:
     try:
         client = get_gemini_client(api_key.strip())
@@ -175,7 +195,6 @@ if api_key:
 
             image_to_process = None
 
-            # Dán ảnh từ clipboard
             if HAS_PASTE_BUTTON:
                 st.markdown("📋 **Dán nhanh từ bộ nhớ tạm:**")
                 paste_result = paste_image_button(
@@ -190,7 +209,6 @@ if api_key:
             else:
                 st.warning("💡 Mẹo: Chạy `pip install streamlit-paste-button` trong Terminal để bật nút dán ảnh 1-click.")
 
-            # Tải file dự phòng
             uploaded_file = st.file_uploader(
                 "Chọn tệp ảnh từ máy tính / Kéo thả vào đây:",
                 type=["jpg", "jpeg", "png"],
@@ -202,9 +220,7 @@ if api_key:
                 except Exception:
                     st.error("Không thể đọc định dạng ảnh này.")
 
-            # Xem trước ảnh & Chạy AI
             if image_to_process is not None:
-                # Chuẩn hóa PIL Image RGB
                 try:
                     if isinstance(image_to_process, bytes):
                         image_to_process = Image.open(io.BytesIO(image_to_process))
@@ -222,58 +238,61 @@ if api_key:
                     st.rerun()
 
                 if st.button("🚀 Chuyển đổi & Vẽ hình ngay", type="primary", use_container_width=True):
-                    prompt = """
-                    Đóng vai (Role):
-                    Bạn là một Giáo sư Toán học và Chuyên gia bậc thầy về lập trình LaTeX/TikZ/PGFPlots.
-                    
-                    Mục tiêu (Objective):
-                    Hãy phân tích hình ảnh bài toán/đồ thị được cung cấp và chuyển đổi chính xác thành mã TikZ hoàn chỉnh, có thể biên dịch (compile) thành công ngay lập tức.
-                    
-                    Yêu cầu kỹ thuật nghiêm ngặt (Strict Guidelines):
-                    1. Môi trường: Luôn sử dụng \\documentclass[tikz, border=5mm]{standalone}. Nếu là đồ thị hàm số phức tạp thì dùng thêm gói pgfplots với \\usepackage{pgfplots} và \\pgfplotsset{compat=1.18}.
-                    2. Thư viện: Khai báo đầy đủ các thư viện cần thiết như \\usetikzlibrary{calc, angles, quotes, intersections, through, positioning, 3d, arrows.meta}.
-                    3. Tọa độ & Điểm: Dùng hệ tọa độ Oxy rõ ràng. Ưu tiên tính toán tọa độ bằng thư viện `calc` hoặc `intersections`. Định nghĩa các điểm \\coordinate trước khi vẽ.
-                    4. Tính thẩm mỹ:
-                       - Nét vẽ: Nét chính dùng thick/thin, nét đứt/khuất/đường dóng dùng `dashed` màu nhạt (`gray!70`).
-                       - Ký hiệu: Góc vuông dùng thư viện `angles`, đoạn thẳng bằng nhau dùng tick mark.
-                       - Nhãn: Ký tự toán đặt trong dấu $ $, vị trí (above, below, left, right...) tránh đè nét vẽ.
-                       - Hình 3D: Dùng hệ tọa độ góc nhìn chuẩn [x={(-0.6cm,-0.4cm)}, y={(1cm,0cm)}, z={(0cm,1cm)}] để góc nhìn không bị vỡ.
-                    5. Cấu trúc code: Có chú thích % rõ ràng cho từng phần.
-                    
-                    Định dạng đầu ra (Output Format):
-                    Chỉ cung cấp DUY NHẤT một khối mã (code block) bằng ngôn ngữ ```latex ... ```. KHÔNG giải thích, KHÔNG chào hỏi, KHÔNG thêm bất kỳ văn bản nào khác bên ngoài khối mã latex.
-                    """
+                    # Kiểm tra xem có đang trong thời gian Cooldown hay không
+                    now = time.time()
+                    if st.session_state["cooldown_until"] > now:
+                        wait_sec = int(st.session_state["cooldown_until"] - now)
+                        st.warning(f"⚠️ Vui lòng chờ hết thời gian đếm ngược ({wait_sec}s nữa) để tránh bị khóa API Key.")
+                    else:
+                        prompt = """
+                        Đóng vai (Role):
+                        Bạn là một Giáo sư Toán học và Chuyên gia bậc thầy về lập trình LaTeX/TikZ/PGFPlots.
+                        
+                        Mục tiêu (Objective):
+                        Hãy phân tích hình ảnh bài toán/đồ thị được cung cấp và chuyển đổi chính xác thành mã TikZ hoàn chỉnh, có thể biên dịch (compile) thành công ngay lập tức.
+                        
+                        Yêu cầu kỹ thuật nghiêm ngặt (Strict Guidelines):
+                        1. Môi trường: Luôn sử dụng \\documentclass[tikz, border=5mm]{standalone}.
+                        2. Thư viện: Khai báo đầy đủ các thư viện cần thiết như \\usetikzlibrary{calc, angles, quotes, intersections, through, positioning, 3d, arrows.meta}.
+                        3. Tọa độ & Điểm: Dùng hệ tọa độ Oxy rõ ràng. Định nghĩa các điểm \\coordinate trước khi vẽ.
+                        4. Tính thẩm mỹ:
+                           - Nét vẽ: Nét chính dùng thick/thin, nét đứt/khuất/đường dóng dùng `dashed` màu nhạt (`gray!70`).
+                           - Nhãn: Ký tự toán đặt trong dấu $ $, vị trí tránh đè nét vẽ.
+                           - Hình 3D: Dùng hệ tọa độ góc nhìn chuẩn [x={(-0.6cm,-0.4cm)}, y={(1cm,0cm)}, z={(0cm,1cm)}].
+                        
+                        Định dạng đầu ra: Chỉ cung cấp DUY NHẤT một khối mã ```latex ... ```. KHÔNG giải thích.
+                        """
 
-                    with st.spinner("⚡ AI đang phân tích và tạo hình..."):
-                        generated_text, err = generate_fast(client, [image_to_process, prompt])
+                        with st.spinner("⚡ AI đang phân tích và tạo hình..."):
+                            generated_text, err, hit_limit = generate_fast(client, [image_to_process, prompt])
 
-                        if generated_text:
-                            tikz_code = clean_tikz_code(generated_text)
-                            st.session_state["tikz_code"] = tikz_code
+                            if generated_text:
+                                tikz_code = clean_tikz_code(generated_text)
+                                st.session_state["tikz_code"] = tikz_code
 
-                            # [MỤC 2 & 5] Render theo format đã chọn & đọc lỗi nếu có
-                            img_bytes, render_err = render_tikz(tikz_code, output_format=render_format)
-                            if img_bytes:
-                                st.session_state["rendered_image"] = img_bytes
-                                st.session_state["render_mime"] = "image/png" if render_format == "png" else "image/svg+xml"
-                                st.success("⚡ Vẽ hình thành công!")
+                                img_bytes, render_err = render_tikz(tikz_code, output_format=render_format)
+                                if img_bytes:
+                                    st.session_state["rendered_image"] = img_bytes
+                                    st.session_state["render_mime"] = "image/png" if render_format == "png" else "image/svg+xml"
+                                    st.success("⚡ Vẽ hình thành công!")
+                                else:
+                                    st.error(f"❌ {render_err}")
                             else:
-                                st.error(f"❌ {render_err}")
-                        else:
-                            st.error(f"❌ {err}")
+                                st.error(f"❌ {err}")
+                                if hit_limit:
+                                    # Chạy đồng hồ đếm ngược 60 giây khi đụng hạn mức Rate Limit
+                                    run_cooldown_countdown(60, "Tự động đếm ngược khôi phục Quota Google API")
 
         with col_right:
             st.subheader("2. Kết quả Hình vẽ Minh họa")
 
             if st.session_state["rendered_image"] is not None:
-                # Hiển thị kết quả hình ảnh
                 st.image(
                     st.session_state["rendered_image"], 
                     caption=f"Hình vẽ TikZ kết quả ({render_format.upper()})", 
                     use_container_width=True
                 )
                 
-                # [MỤC 2] Nút tải ảnh động theo định dạng đã chọn (PNG/SVG)
                 st.download_button(
                     label=f"📥 Tải ảnh {render_format.upper()} về máy",
                     data=st.session_state["rendered_image"],
@@ -283,12 +302,10 @@ if api_key:
                     use_container_width=True,
                 )
 
-                # Xem & copy mã TikZ
                 with st.expander("📝 Xem / Copy Mã TikZ"):
                     st.code(st.session_state["tikz_code"], language="latex")
                     st.markdown("[🌐 Mở trang hotrohoctap.com/1ai/6tikz](https://hotrohoctap.com/1ai/6tikz/)")
 
-                # [MỤC 4] Tính năng Yêu cầu AI chỉnh sửa hình vẽ
                 st.markdown("---")
                 st.markdown("### ✏️ Yêu cầu AI sửa hình vẽ này")
                 refine_input = st.text_input(
@@ -297,7 +314,11 @@ if api_key:
                 )
                 
                 if st.button("✨ Cập nhật hình vẽ theo yêu cầu", type="secondary", use_container_width=True):
-                    if not refine_input.strip():
+                    now = time.time()
+                    if st.session_state["cooldown_until"] > now:
+                        wait_sec = int(st.session_state["cooldown_until"] - now)
+                        st.warning(f"⚠️ Vui lòng chờ hết thời gian đếm ngược ({wait_sec}s nữa) để gửi yêu cầu.")
+                    elif not refine_input.strip():
                         st.warning("⚠️ Vui lòng nhập yêu cầu cần chỉnh sửa.")
                     else:
                         refine_prompt = f"""
@@ -312,16 +333,13 @@ if api_key:
                         YÊU CẦU CHỈNH SỬA TỪ NGUỜI DÙNG:
                         {refine_input}
 
-                        Yêu cầu kỹ thuật:
-                        - Cập nhật chính xác mã TikZ dựa trên mã hiện tại và yêu cầu chỉnh sửa.
-                        - Giữ nguyên tính chính xác của hình học và thẩm mỹ nét vẽ.
-                        - Chỉ trả về DUY NHẤT một khối mã ```latex ... ```. KHÔNG giải thích, KHÔNG chào hỏi.
+                        Chỉ trả về DUY NHẤT một khối mã ```latex ... ```. KHÔNG giải thích.
                         """
 
                         payload = [image_to_process, refine_prompt] if image_to_process is not None else [refine_prompt]
 
                         with st.spinner("⚡ AI đang cập nhật lại hình vẽ..."):
-                            generated_text, err = generate_fast(client, payload)
+                            generated_text, err, hit_limit = generate_fast(client, payload)
                             if generated_text:
                                 new_tikz_code = clean_tikz_code(generated_text)
                                 st.session_state["tikz_code"] = new_tikz_code
@@ -336,6 +354,8 @@ if api_key:
                                     st.error(f"❌ {render_err}")
                             else:
                                 st.error(f"❌ {err}")
+                                if hit_limit:
+                                    run_cooldown_countdown(60, "Tự động đếm ngược khôi phục Quota Google API")
             else:
                 st.info("👈 Hãy dán hoặc tải ảnh đề bài ở cột bên trái.")
 else:
