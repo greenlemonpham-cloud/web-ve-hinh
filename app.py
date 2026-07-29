@@ -114,32 +114,8 @@ def generate_fast(client, image, prompt):
     # 2. Danh sách mô hình chuẩn SDK google-genai (Ưu tiên 2.5-flash và 2.0-flash-lite)
     # Danh sách tối đa các mô hình Gemini hỗ trợ nhận diện hình ảnh
     fast_models = [
-        # --- 1. Nhóm Gemini 1.5 Flash (Nhanh, ổn định nhất & Quota Free cao nhất) ---
-        "gemini-1.5-flash",
-        "gemini-1.5-flash-8b",
-        "gemini-1.5-flash-latest",
-        "gemini-1.5-flash-002",
-        "gemini-1.5-flash-001",
-        
-        # --- 2. Nhóm Gemini 2.0 (Tốc độ cực nhanh, trí tuệ nhân tạo thế hệ mới) ---
         "gemini-2.0-flash",
         "gemini-2.0-flash-lite",
-        "gemini-2.0-flash-lite-preview-02-05",
-        "gemini-2.0-flash-lite-preview",
-        "gemini-2.0-flash-exp",
-        "gemini-2.0-flash-thinking-exp-01-21",
-        
-        # --- 3. Nhóm Gemini 1.5 Pro (Chuyên toán & tư duy hình học phức tạp) ---
-        "gemini-1.5-pro",
-        "gemini-1.5-pro-latest",
-        "gemini-1.5-pro-002",
-        "gemini-1.5-pro-001",
-        
-        # --- 4. Nhóm Thử nghiệm & Chuyên sâu (Experimental Models) ---
-        "gemini-2.0-pro-exp-02-05",
-        "gemini-2.0-pro-exp",
-        "gemini-exp-1206",
-        "learnlm-1.5-pro-experimental",
     ]
 
     error_logs = []
