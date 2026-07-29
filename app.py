@@ -20,13 +20,13 @@ except ImportError:
 # 1. CẤU HÌNH GIAO DIỆN
 # ==========================================
 st.set_page_config(
-    page_title="Chuyển Ảnh Bài Toán Sang TikZ (OpenRouter)",
+    page_title="Chuyển Ảnh Bài Toán Sang TikZ (Auto AI)",
     page_icon="📐",
     layout="wide",
 )
 
 st.title("📐 AI Chuyển Đề Bài Hình Học Sang Hình Vẽ TikZ")
-st.markdown("Made by levu | Powered by **OpenRouter API**")
+st.markdown("Made by levu | **Tự động thử tất cả AI Vision trên OpenRouter**")
 
 # ==========================================
 # 2. CẤU HÌNH API KEY & ĐỊNH DẠNG TẠI SIDEBAR
@@ -56,11 +56,13 @@ render_format = st.sidebar.selectbox(
     help="Chọn SVG để có chất lượng ảnh vector nét tuyệt đối khi chèn vào đề thi Word/LaTeX"
 )
 
-@st.cache_resource
 def get_openrouter_client(key: str):
+    clean_key = key.strip()
+    if not clean_key:
+        return None
     return OpenAI(
         base_url="https://openrouter.ai/api/v1",
-        api_key=key,
+        api_key=clean_key,
     )
 
 # ==========================================
@@ -87,7 +89,6 @@ def clean_tikz_code(raw_text: str) -> str:
     return clean_body
 
 def render_tikz(tikz_code: str, output_format: str = "png") -> tuple[bytes | None, str | None]:
-    """Biên dịch TikZ qua Kroki API"""
     full_doc = f"""\\documentclass[tikz,border=5pt]{{standalone}}
 \\usepackage{{amsmath,amssymb}}
 \\usetikzlibrary{{calc,arrows,arrows.meta,intersections,shapes,patterns,angles,quotes}}
@@ -116,15 +117,14 @@ def render_tikz(tikz_code: str, output_format: str = "png") -> tuple[bytes | Non
     except Exception as e:
         return None, f"Lỗi kết nối Render: {e}"
 
-def generate_fast(client: OpenAI, contents_payload: list):
+def generate_fast_auto(client: OpenAI, contents_payload: list):
     """
-    Hàm gọi OpenRouter API chuyển đổi payload (ảnh + prompt) sang format chuẩn OpenAI
+    Tự động duyệt qua tất cả AI Vision khả dụng trên OpenRouter
     """
-    # 1. Chuyển đổi payload thành message content chuẩn OpenAI Vision
+    # 1. Chuyển đổi payload sang định dạng OpenAI Vision chuẩn
     user_content = []
     for item in contents_payload:
         if isinstance(item, Image.Image):
-            # Mã hóa ảnh PIL sang dạng base64
             buffered = io.BytesIO()
             item.save(buffered, format="PNG")
             img_b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
@@ -138,17 +138,28 @@ def generate_fast(client: OpenAI, contents_payload: list):
                 "text": item
             })
 
-    # 2. Danh sách các Model Vision chuẩn mới nhất trên OpenRouter
-    vision_models = [
-        "google/gemini-2.0-flash-exp:free",
-        "google/gemini-2.0-flash-lite-preview-02-05:free",
-        "qwen/qwen-2.5-vl-72b-instruct:free",
-        "meta-llama/llama-3.2-11b-vision-instruct:free",
+    # 2. Danh sách TOÀN BỘ các dòng AI Vision mạnh nhất
+    base_models = [
         "google/gemini-2.0-flash-001",
+        "google/gemini-2.0-flash-lite-001",
+        "google/gemini-flash-1.5",
+        "google/gemini-flash-1.5-8b",
+        "qwen/qwen-2.5-vl-72b-instruct",
+        "meta-llama/llama-3.2-11b-vision-instruct",
+        "mistralai/pixtral-12b",
+        "openai/gpt-4o-mini",
     ]
 
+    # Tự động kết hợp cả bản chuẩn và biến thể :free
+    all_candidates = []
+    for m in base_models:
+        all_candidates.append(m)
+        all_candidates.append(f"{m}:free")
+
     error_logs = []
-    for model_name in vision_models:
+    
+    # 3. Vòng lặp tự động chạy thử từng Model
+    for model_name in all_candidates:
         try:
             response = client.chat.completions.create(
                 model=model_name,
@@ -156,21 +167,21 @@ def generate_fast(client: OpenAI, contents_payload: list):
                 extra_headers={
                     "HTTP-Referer": "https://streamlit.io",
                     "X-Title": "TikZ Generator",
-                }
+                },
+                timeout=25
             )
             if response and response.choices and response.choices[0].message.content:
+                # Thành công -> Trả về kết quả ngay
                 return response.choices[0].message.content, None
         except Exception as e:
             err_msg = str(e)
-            if "429" in err_msg or "rate_limit" in err_msg.lower():
-                error_logs.append(f"• {model_name}: ⚠️ Bận hoặc chạm giới hạn request, đang chuyển model khác...")
-                time.sleep(1)
-            else:
-                error_logs.append(f"• {model_name}: {err_msg}")
+            # Chỉ ghi nhận lỗi rút gọn để tránh ngợp giao diện
+            if "404" not in err_msg and "400" not in err_msg:
+                error_logs.append(f"• {model_name}: {err_msg[:120]}")
             continue
 
-    detailed_error = "\n".join(error_logs)
-    return None, f"❌ AI chưa thể xử lý. Chi tiết lỗi từ OpenRouter:\n{detailed_error}"
+    detailed_error = "\n".join(error_logs) if error_logs else "Tất cả các Model AI hiện tại đều bận hoặc không phản hồi."
+    return None, f"❌ Chưa thể xử lý bài toán. Chi tiết phản hồi:\n{detailed_error}"
 
 # ==========================================
 # 4. LUỒNG XỬ LÝ CHÍNH
@@ -185,11 +196,7 @@ if "render_mime" not in st.session_state:
     st.session_state["render_mime"] = "image/png"
 
 if api_key:
-    try:
-        client = get_openrouter_client(api_key.strip())
-    except Exception as e:
-        st.error(f"Lỗi khởi tạo OpenRouter Client: {e}")
-        client = None
+    client = get_openrouter_client(api_key.strip())
 
     if client:
         col_left, col_right = st.columns(2)
@@ -267,8 +274,8 @@ if api_key:
                     Chỉ cung cấp DUY NHẤT một khối mã (code block) bằng ngôn ngữ ```latex ... ```. KHÔNG giải thích, KHÔNG chào hỏi, KHÔNG thêm bất kỳ văn bản nào khác bên ngoài khối mã latex.
                     """
 
-                    with st.spinner("⚡ OpenRouter AI đang phân tích và tạo hình..."):
-                        generated_text, err = generate_fast(client, [image_to_process, prompt])
+                    with st.spinner("⚡ AI đang tự động tìm mô hình khả dụng và vẽ hình..."):
+                        generated_text, err = generate_fast_auto(client, [image_to_process, prompt])
 
                         if generated_text:
                             tikz_code = clean_tikz_code(generated_text)
@@ -338,8 +345,8 @@ if api_key:
 
                         payload = [image_to_process, refine_prompt] if image_to_process is not None else [refine_prompt]
 
-                        with st.spinner("⚡ AI đang cập nhật lại hình vẽ..."):
-                            generated_text, err = generate_fast(client, payload)
+                        with st.spinner("⚡ AI đang tự động xử lý cập nhật..."):
+                            generated_text, err = generate_fast_auto(client, payload)
                             if generated_text:
                                 new_tikz_code = clean_tikz_code(generated_text)
                                 st.session_state["tikz_code"] = new_tikz_code
