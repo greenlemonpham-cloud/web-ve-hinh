@@ -20,13 +20,13 @@ except ImportError:
 # 1. CẤU HÌNH GIAO DIỆN
 # ==========================================
 st.set_page_config(
-    page_title="Chuyển Ảnh Bài Toán Sang TikZ (Gemini Only)",
+    page_title="Chuyển Ảnh Bài Toán Sang TikZ (100% Gemini Vision)",
     page_icon="📐",
     layout="wide",
 )
 
 st.title("📐 AI Chuyển Đề Bài Hình Học Sang Hình Vẽ TikZ")
-st.markdown("Made by levu | **Chuyên biệt Gemini & GPT-4o (Tối giản - Không nét thừa)**")
+st.markdown("Made by levu | **Độc quyền 100% Gemini Vision (Độ chính xác hình học cao nhất)**")
 
 # ==========================================
 # 2. CẤU HÌNH API KEY & ĐỊNH DẠNG TẠI SIDEBAR
@@ -117,9 +117,9 @@ def render_tikz(tikz_code: str, output_format: str = "png") -> tuple[bytes | Non
     except Exception as e:
         return None, f"Lỗi kết nối Render: {e}"
 
-def generate_gemini_only(client: OpenAI, contents_payload: list):
+def generate_gemini_pure(client: OpenAI, contents_payload: list):
     """
-    CHỈ SỬ DỤNG DÒNG GEMINI VÀ GPT-4O (Đã loại bỏ hoàn toàn Qwen & Llama)
+    ĐỘC QUYỀN HỌ GEMINI VISION (Loại bỏ hoàn toàn GPT-4o-Mini, Qwen, Llama)
     """
     user_content = []
     for item in contents_payload:
@@ -137,27 +137,26 @@ def generate_gemini_only(client: OpenAI, contents_payload: list):
                 "text": item
             })
 
-    # Danh sách AI ưu tiên tuyệt đối cho Gemini & OpenAI
-    selected_models = [
+    # Chỉ dùng danh sách các phiên bản Gemini Vision mạnh nhất
+    gemini_models = [
         "google/gemini-2.0-flash-001",
         "google/gemini-2.0-flash-lite-001",
         "google/gemini-1.5-pro",
         "google/gemini-flash-1.5",
-        "openai/gpt-4o-mini",
         "google/gemini-2.0-flash-001:free",
         "google/gemini-2.0-flash-lite-001:free",
         "google/gemini-flash-1.5:free"
     ]
 
     error_logs = []
-    for model_name in selected_models:
+    for model_name in gemini_models:
         try:
             response = client.chat.completions.create(
                 model=model_name,
                 messages=[{"role": "user", "content": user_content}],
                 extra_headers={
                     "HTTP-Referer": "https://streamlit.io",
-                    "X-Title": "TikZ Generator Gemini Dedicated",
+                    "X-Title": "TikZ Pure Gemini Generator",
                 },
                 timeout=30
             )
@@ -169,29 +168,35 @@ def generate_gemini_only(client: OpenAI, contents_payload: list):
                 error_logs.append(f"• {model_name}: {err_msg[:100]}")
             continue
 
-    detailed_error = "\n".join(error_logs) if error_logs else "Gemini API đang bận, vui lòng bấm thử lại sau 3 giây."
+    detailed_error = "\n".join(error_logs) if error_logs else "Máy chủ Gemini đang quá tải, hãy thử lại sau vài giây."
     return None, None, f"❌ Chưa thể xử lý. Chi tiết:\n{detailed_error}"
 
-# Prompt Ép Tối Giản (Strict Minimalism Prompt)
-MINIMALIST_PROMPT = """
-Đóng vai: Chuyên gia biên soạn Sách Giáo Khoa Toán học cao cấp.
+# Prompt Tối ưu Tọa độ & Cấu trúc Hình học
+GEMINI_STRICT_PROMPT = """
+Đóng vai: Chuyên gia biên soạn Sách Giáo Khoa Toán học.
 
-Mục tiêu: Phân tích hình ảnh đề bài và tạo mã TikZ TỐI GIẢN, CHUẨN XÁC, SẠCH SẼ.
+Mục tiêu: Phân tích hình ảnh đề bài và tạo mã TikZ CHÍNH XÁC 100% VỀ CẤU TRÚC HÌNH HỌC, ĐẸP, TỐI GIẢN.
 
-QUY TẮC TỐI GIẢN & THẨM MỸ (BẮT BUỘC THỰC HIỆN):
-1. KHÔNG VẼ NÉT THỪA: CHỈ VẼ ĐÚNG các điểm, đường thẳng, hình khối có trong hình ảnh đề bài. TUYỆT ĐỐI KHÔNG tự ý vẽ thêm khung viền trang trí, họa tiết nền, hay các đường dóng không liên quan.
-2. NÉT VẼ TỰ NHIÊN:
-   - Dùng `\\begin{tikzpicture}[scale=1.2, >=stealth, line join=round, line cap=round]`
-   - Nét chính: `thick`, màu `blue!70!black` hoặc `black!85`.
-   - Nét ẩn/khuất: `dashed, gray!60`.
-3. TÊN ĐIỂM & NHÃN (LABELS):
-   - Đặt nhãn khéo léo (`node[above left]`, `node[below right]`) để chữ KHÔNG BAO GIỜ đè lên nét vẽ.
+QUY TẮC DỰNG HÌNH BẮT BUỘC:
+1. TỌA ĐỘ VÀ VỊ TRÍ CHÍNH XÁC:
+   - Hãy quan sát thật kỹ vị trí tương quan giữa các điểm (A, B, C, D, S, H...) trong ảnh.
+   - Định nghĩa tọa độ chuẩn xác trước khi nối các đường.
+   - KHÔNG ĐƯỢC làm sai lệch góc, hướng nghiêng hay vị trí đỉnh của hình.
+
+2. NÉT VẼ VÀ NÉT KHUẤT:
+   - Đường nhìn thấy: Nét liền `thick`, màu `blue!70!black` hoặc `black!85`.
+   - Đường bị che khuất/đường phụ: Nét đứt `dashed, gray!60`.
+   - KHÔNG tự ý vẽ thêm các đường khung viền hay đường dóng thừa không có trong ảnh đề bài.
+
+3. NHÃN ĐIỂM (LABELS):
+   - Đặt nhãn khéo léo (`node[above left]`, `node[below right]`, `node[above]`) để tên điểm KHÔNG BAO GIỜ đè lên nét vẽ.
    - Nhãn điểm nằm trong dấu `$ $` (Ví dụ: `$A$`, `$B$`).
-4. HÌNH 3D VÀ ĐỒ THỊ:
-   - Dùng hệ tọa độ góc nhìn chuẩn `[x={(-0.6cm,-0.3cm)}, y={(1cm,0cm)}, z={(0cm,1cm)}]`.
+
+4. HÌNH CHÓP / HÌNH HỘP 3D:
+   - Sử dụng góc nhìn chuẩn [x={(-0.6cm,-0.3cm)}, y={(1cm,0cm)}, z={(0cm,1cm)}] để đáy và đường cao đứng đúng vị trí không gian.
 
 Định dạng đầu ra:
-Chỉ trả về DUY NHẤT 1 khối mã ```latex ... ```. KHÔNG giải thích, KHÔNG thêm bất kỳ chữ nào bên ngoài block code.
+Chỉ trả về DUY NHẤT 1 khối mã ```latex ... ```. KHÔNG giải thích.
 """
 
 # ==========================================
@@ -262,9 +267,9 @@ if api_key:
                     st.session_state["used_model"] = ""
                     st.rerun()
 
-                if st.button("🚀 Gemini Vẽ hình (Tối giản & Đẹp)", type="primary", use_container_width=True):
-                    with st.spinner("⚡ Gemini đang phân tích và tạo nét vẽ tối giản..."):
-                        generated_text, model_used, err = generate_gemini_only(client, [image_to_process, MINIMALIST_PROMPT])
+                if st.button("🚀 Gemini Vẽ hình (Độ chính xác cao)", type="primary", use_container_width=True):
+                    with st.spinner("⚡ Gemini Vision đang phân tích không gian & dựng hình..."):
+                        generated_text, model_used, err = generate_gemini_pure(client, [image_to_process, GEMINI_STRICT_PROMPT])
 
                         if generated_text:
                             tikz_code = clean_tikz_code(generated_text)
@@ -275,7 +280,7 @@ if api_key:
                             if img_bytes:
                                 st.session_state["rendered_image"] = img_bytes
                                 st.session_state["render_mime"] = "image/png" if render_format == "png" else "image/svg+xml"
-                                st.success(f"⚡ Đã vẽ thành công bằng: **{model_used}**")
+                                st.success(f"⚡ Vẽ thành công bằng: **{model_used}**")
                             else:
                                 st.error(f"❌ {render_err}")
                         else:
@@ -285,7 +290,7 @@ if api_key:
             st.subheader("2. Kết quả Hình vẽ Minh họa")
 
             if st.session_state["rendered_image"] is not None:
-                st.caption(f"🤖 Model AI thực hiện: `{st.session_state['used_model']}`")
+                st.caption(f"🤖 AI thực hiện: `{st.session_state['used_model']}`")
                 st.image(
                     st.session_state["rendered_image"], 
                     caption=f"Hình vẽ TikZ kết quả ({render_format.upper()})", 
@@ -308,7 +313,7 @@ if api_key:
                 st.markdown("---")
                 st.markdown("### ✏️ Yêu cầu Gemini sửa hình vẽ")
                 refine_input = st.text_input(
-                    "Nhập yêu cầu sửa (VD: Xóa bớt đường dóng phụ, dịch nhãn A sang trái):",
+                    "Nhập yêu cầu sửa (VD: Đổi vị trí điểm A, thêm nét đứt SH):",
                     key="refine_input_text"
                 )
                 
@@ -318,14 +323,14 @@ if api_key:
                     else:
                         refine_prompt = f"""
                         Role: Chuyên gia TikZ.
-                        Nhiệm vụ: Bỏ bớt nét thừa và cập nhật mã TikZ theo đúng yêu cầu người dùng.
+                        Nhiệm vụ: Cập nhật mã TikZ hiện tại theo đúng yêu cầu người dùng, đảm bảo chuẩn hình học.
 
                         MÃ TIKZ HIỆN TẠI:
                         ```latex
                         {st.session_state["tikz_code"]}
                         ```
 
-                        YÊU CẦU CHỈNH SỬA TỪ NGUỜI DÙNG:
+                        YÊU CẦU CHỈNH SỬA:
                         {refine_input}
 
                         Chỉ trả về DUY NHẤT một khối mã ```latex ... ```. KHÔNG giải thích.
@@ -333,8 +338,8 @@ if api_key:
 
                         payload = [image_to_process, refine_prompt] if image_to_process is not None else [refine_prompt]
 
-                        with st.spinner("⚡ Gemini đang tinh chỉnh lại nét vẽ..."):
-                            generated_text, model_used, err = generate_gemini_only(client, payload)
+                        with st.spinner("⚡ Gemini đang chỉnh sửa nét vẽ..."):
+                            generated_text, model_used, err = generate_gemini_pure(client, payload)
                             if generated_text:
                                 new_tikz_code = clean_tikz_code(generated_text)
                                 st.session_state["tikz_code"] = new_tikz_code
