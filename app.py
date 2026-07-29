@@ -97,14 +97,13 @@ def render_tikz(tikz_code: str) -> tuple[bytes | None, str | None]:
 
 def generate_fast(client, image, prompt):
     """
-    Hàm gọi AI chuẩn hóa dữ liệu ảnh và hiện LỖI THẬT từ Google
+    Hàm gọi AI chuẩn hóa dữ liệu ảnh và sử dụng tên mô hình chuẩn SDK mới
     """
-    # 1. Chuẩn hóa dữ liệu ảnh sang định dạng PIL RGB để Google SDK không bị lỗi
+    # 1. Chuẩn hóa dữ liệu ảnh sang định dạng PIL RGB
     try:
         if isinstance(image, bytes):
             image = Image.open(io.BytesIO(image))
         elif not isinstance(image, Image.Image):
-            # Trường hợp ảnh từ streamlit-paste-button
             image = Image.open(io.BytesIO(image))
             
         if image.mode != "RGB":
@@ -112,11 +111,11 @@ def generate_fast(client, image, prompt):
     except Exception as img_err:
         return None, f"Lỗi xử lý định dạng ảnh: {img_err}"
 
-    # 2. Danh sách mô hình Gemini ổn định nhất
+    # 2. Danh sách mô hình chuẩn SDK google-genai (Ưu tiên 2.5-flash và 2.0-flash-lite)
     fast_models = [
+        "gemini-2.5-flash",
+        "gemini-2.0-flash-lite",
         "gemini-2.0-flash",
-        "gemini-1.5-flash",
-        "gemini-1.5-flash-8b",
     ]
 
     error_logs = []
@@ -132,7 +131,7 @@ def generate_fast(client, image, prompt):
             error_logs.append(f"• {model_name}: {e}")
             continue
 
-    # 3. Trả về CHI TIẾT LỖI THẬT thay vì thông báo Quota giả
+    # 3. Trả về chi tiết lỗi nếu không mô hình nào chạy được
     detailed_error = "\n".join(error_logs)
     return (
         None,
