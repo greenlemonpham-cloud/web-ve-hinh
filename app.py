@@ -4,6 +4,7 @@ import re
 import time
 import urllib.parse
 import urllib.request
+import urllib.error
 from PIL import Image
 from google import genai
 import streamlit as st
@@ -28,7 +29,7 @@ st.title("📐 AI Chuyển Đề Bài Hình Học Sang Hình Vẽ TikZ")
 st.markdown("Made by levu")
 
 # ==========================================
-# 2. CẤU HÌNH API KEY TẠI SIDEBAR
+# 2. CẤU HÌNH API KEY & ĐỊNH DẠNG TẠI SIDEBAR
 # ==========================================
 st.sidebar.header("⚙️ Cấu hình Hệ thống")
 
@@ -46,6 +47,14 @@ if input_key:
     st.session_state["user_api_key"] = input_key.strip()
 
 api_key = st.session_state["user_api_key"]
+
+# [MỤC 2] Tùy chọn định dạng đầu ra (PNG hoặc SVG)
+render_format = st.sidebar.selectbox(
+    "🖼️ Định dạng ảnh đầu ra:",
+    options=["png", "svg"],
+    index=0,
+    help="Chọn SVG để có chất lượng ảnh vector nét tuyệt đối khi chèn vào đề thi Word/LaTeX"
+)
 
 @st.cache_resource
 def get_gemini_client(key: str):
@@ -74,7 +83,12 @@ def clean_tikz_code(raw_text: str) -> str:
         clean_body = f"\\begin{{tikzpicture}}\n{clean_body}\n\\end{{tikzpicture}}"
     return clean_body
 
-def render_tikz(tikz_code: str) -> tuple[bytes | None, str | None]:
+def render_tikz(tikz_code: str, output_format: str = "png") -> tuple[bytes | None, str | None]:
+    """
+    Biên dịch TikZ qua Kroki API.
+    - Hỗ trợ định dạng PNG và SVG (Mục 2)
+    - Đọc chi tiết nguyên nhân lỗi từ Server Kroki (Mục 5)
+    """
     full_doc = f"""\\documentclass[tikz,border=5pt]{{standalone}}
 \\usepackage{{amsmath,amssymb}}
 \\usetikzlibrary{{calc,arrows,arrows.meta,intersections,shapes,patterns,angles,quotes}}
@@ -82,38 +96,32 @@ def render_tikz(tikz_code: str) -> tuple[bytes | None, str | None]:
 {tikz_code}
 \\end{{document}}"""
 
-    url = "https://kroki.io/tikz/png"
+    url = f"https://kroki.io/tikz/{output_format}"
     try:
         req = urllib.request.Request(
             url,
             data=full_doc.encode("utf-8"),
             headers={"Content-Type": "text/plain; charset=utf-8", "User-Agent": "Mozilla/5.0"},
         )
-        with urllib.request.urlopen(req, timeout=5) as response:
+        with urllib.request.urlopen(req, timeout=10) as response:
             if response.status == 200:
                 return response.read(), None
-            return None, f"Lỗi Kroki: {response.status}"
+            return None, f"Lỗi Kroki: HTTP {response.status}"
+    except urllib.error.HTTPError as e:
+        # [MỤC 5] Đọc thông báo lỗi cú pháp chi tiết từ Server Kroki
+        try:
+            error_details = e.read().decode('utf-8', errors='ignore')
+            clean_err = re.sub(r'<[^>]+>', '', error_details).strip()
+            return None, f"Lỗi cú pháp TikZ (HTTP {e.code}): {clean_err[:250]}"
+        except Exception:
+            return None, f"Lỗi biên dịch Kroki: HTTP {e.code}"
     except Exception as e:
         return None, f"Lỗi kết nối Render: {e}"
 
-def generate_fast(client, image, prompt):
+def generate_fast(client, contents_payload):
     """
-    Hàm gọi AI chuẩn hóa dữ liệu ảnh và sử dụng tên mô hình chuẩn SDK mới
+    Hàm gọi AI xử lý danh sách payload (ảnh + prompt hoặc prompt điều chỉnh)
     """
-    # 1. Chuẩn hóa dữ liệu ảnh sang định dạng PIL RGB
-    try:
-        if isinstance(image, bytes):
-            image = Image.open(io.BytesIO(image))
-        elif not isinstance(image, Image.Image):
-            image = Image.open(io.BytesIO(image))
-            
-        if image.mode != "RGB":
-            image = image.convert("RGB")
-    except Exception as img_err:
-        return None, f"Lỗi xử lý định dạng ảnh: {img_err}"
-
-    # 2. Danh sách mô hình chuẩn SDK google-genai (Ưu tiên 2.5-flash và 2.0-flash-lite)
-    # Danh sách tối đa các mô hình Gemini hỗ trợ nhận diện hình ảnh
     fast_models = [
         "gemini-2.0-flash",
         "gemini-2.0-flash-lite",
@@ -124,7 +132,7 @@ def generate_fast(client, image, prompt):
         try:
             response = client.models.generate_content(
                 model=model_name,
-                contents=[image, prompt],
+                contents=contents_payload,
             )
             if response and response.text:
                 return response.text, None
@@ -137,23 +145,20 @@ def generate_fast(client, image, prompt):
                 error_logs.append(f"• {model_name}: {err_msg}")
             continue
 
-    # 3. Trả về chi tiết lỗi nếu không mô hình nào chạy được
     detailed_error = "\n".join(error_logs)
-    return (
-        None,
-        f"❌ AI chưa thể xử lý. Chi tiết lỗi từ Google API:\n{detailed_error}"
-    )
+    return None, f"❌ AI chưa thể xử lý. Chi tiết lỗi từ Google API:\n{detailed_error}"
 
 # ==========================================
 # 4. LUỒNG XỬ LÝ CHÍNH
 # ==========================================
-# Khởi tạo key quản lý làm mới giao diện
 if "paste_key" not in st.session_state:
     st.session_state["paste_key"] = 0
 if "rendered_image" not in st.session_state:
     st.session_state["rendered_image"] = None
 if "tikz_code" not in st.session_state:
     st.session_state["tikz_code"] = ""
+if "render_mime" not in st.session_state:
+    st.session_state["render_mime"] = "image/png"
 
 if api_key:
     try:
@@ -170,7 +175,7 @@ if api_key:
 
             image_to_process = None
 
-            # Hiển thị nút Dán nếu đã cài thư viện (kèm dynamic key để xoá)
+            # Dán ảnh từ clipboard
             if HAS_PASTE_BUTTON:
                 st.markdown("📋 **Dán nhanh từ bộ nhớ tạm:**")
                 paste_result = paste_image_button(
@@ -185,7 +190,7 @@ if api_key:
             else:
                 st.warning("💡 Mẹo: Chạy `pip install streamlit-paste-button` trong Terminal để bật nút dán ảnh 1-click.")
 
-            # Tải file dự phòng (kèm dynamic key để xoá)
+            # Tải file dự phòng
             uploaded_file = st.file_uploader(
                 "Chọn tệp ảnh từ máy tính / Kéo thả vào đây:",
                 type=["jpg", "jpeg", "png"],
@@ -199,9 +204,17 @@ if api_key:
 
             # Xem trước ảnh & Chạy AI
             if image_to_process is not None:
+                # Chuẩn hóa PIL Image RGB
+                try:
+                    if isinstance(image_to_process, bytes):
+                        image_to_process = Image.open(io.BytesIO(image_to_process))
+                    if image_to_process.mode != "RGB":
+                        image_to_process = image_to_process.convert("RGB")
+                except Exception:
+                    pass
+
                 st.image(image_to_process, caption="Ảnh đề bài đã sẵn sàng", use_container_width=True)
 
-                # Nút xóa ảnh input
                 if st.button("❌ Xóa ảnh", use_container_width=True):
                     st.session_state["paste_key"] += 1
                     st.session_state["rendered_image"] = None
@@ -225,45 +238,104 @@ if api_key:
                        - Ký hiệu: Góc vuông dùng thư viện `angles`, đoạn thẳng bằng nhau dùng tick mark.
                        - Nhãn: Ký tự toán đặt trong dấu $ $, vị trí (above, below, left, right...) tránh đè nét vẽ.
                        - Hình 3D: Dùng hệ tọa độ góc nhìn chuẩn [x={(-0.6cm,-0.4cm)}, y={(1cm,0cm)}, z={(0cm,1cm)}] để góc nhìn không bị vỡ.
-                    5. Cấu trúc code: Có chú thích % rõ ràng cho từng phần (khai báo điểm, vẽ đường, đánh dấu góc...).
+                    5. Cấu trúc code: Có chú thích % rõ ràng cho từng phần.
                     
                     Định dạng đầu ra (Output Format):
                     Chỉ cung cấp DUY NHẤT một khối mã (code block) bằng ngôn ngữ ```latex ... ```. KHÔNG giải thích, KHÔNG chào hỏi, KHÔNG thêm bất kỳ văn bản nào khác bên ngoài khối mã latex.
                     """
 
                     with st.spinner("⚡ AI đang phân tích và tạo hình..."):
-                        generated_text, err = generate_fast(client, image_to_process, prompt)
+                        generated_text, err = generate_fast(client, [image_to_process, prompt])
 
                         if generated_text:
                             tikz_code = clean_tikz_code(generated_text)
                             st.session_state["tikz_code"] = tikz_code
 
-                            img_bytes, render_err = render_tikz(tikz_code)
+                            # [MỤC 2 & 5] Render theo format đã chọn & đọc lỗi nếu có
+                            img_bytes, render_err = render_tikz(tikz_code, output_format=render_format)
                             if img_bytes:
                                 st.session_state["rendered_image"] = img_bytes
+                                st.session_state["render_mime"] = "image/png" if render_format == "png" else "image/svg+xml"
                                 st.success("⚡ Vẽ hình thành công!")
                             else:
-                                st.error(f"❌ Lỗi render TikZ: {render_err}")
+                                st.error(f"❌ {render_err}")
                         else:
-                            st.error(f"❌ Lỗi AI: {err}")
+                            st.error(f"❌ {err}")
 
         with col_right:
             st.subheader("2. Kết quả Hình vẽ Minh họa")
 
             if st.session_state["rendered_image"] is not None:
-                st.image(st.session_state["rendered_image"], caption="Hình vẽ TikZ kết quả", use_container_width=True)
+                # Hiển thị kết quả hình ảnh
+                st.image(
+                    st.session_state["rendered_image"], 
+                    caption=f"Hình vẽ TikZ kết quả ({render_format.upper()})", 
+                    use_container_width=True
+                )
+                
+                # [MỤC 2] Nút tải ảnh động theo định dạng đã chọn (PNG/SVG)
                 st.download_button(
-                    label="📥 Tải ảnh PNG về máy",
+                    label=f"📥 Tải ảnh {render_format.upper()} về máy",
                     data=st.session_state["rendered_image"],
-                    file_name="hinh_hoc_tikz.png",
-                    mime="image/png",
+                    file_name=f"hinh_hoc_tikz.{render_format}",
+                    mime=st.session_state["render_mime"],
                     type="primary",
                     use_container_width=True,
                 )
 
-                with st.expander("📝 Xem / Copy Mã TikZ & Biên dịch"):
+                # Xem & copy mã TikZ
+                with st.expander("📝 Xem / Copy Mã TikZ"):
                     st.code(st.session_state["tikz_code"], language="latex")
                     st.markdown("[🌐 Mở trang hotrohoctap.com/1ai/6tikz](https://hotrohoctap.com/1ai/6tikz/)")
+
+                # [MỤC 4] Tính năng Yêu cầu AI chỉnh sửa hình vẽ
+                st.markdown("---")
+                st.markdown("### ✏️ Yêu cầu AI sửa hình vẽ này")
+                refine_input = st.text_input(
+                    "Nhập yêu cầu sửa (VD: Thêm đường cao AH nét đứt, Đổi điểm C thành C'):",
+                    key="refine_input_text"
+                )
+                
+                if st.button("✨ Cập nhật hình vẽ theo yêu cầu", type="secondary", use_container_width=True):
+                    if not refine_input.strip():
+                        st.warning("⚠️ Vui lòng nhập yêu cầu cần chỉnh sửa.")
+                    else:
+                        refine_prompt = f"""
+                        Role: Giáo sư Toán học & Chuyên gia bậc thầy về TikZ.
+                        Nhiệm vụ: Chỉnh sửa mã TikZ hiện tại theo yêu cầu người dùng.
+
+                        MÃ TIKZ HIỆN TẠI:
+                        ```latex
+                        {st.session_state["tikz_code"]}
+                        ```
+
+                        YÊU CẦU CHỈNH SỬA TỪ NGUỜI DÙNG:
+                        {refine_input}
+
+                        Yêu cầu kỹ thuật:
+                        - Cập nhật chính xác mã TikZ dựa trên mã hiện tại và yêu cầu chỉnh sửa.
+                        - Giữ nguyên tính chính xác của hình học và thẩm mỹ nét vẽ.
+                        - Chỉ trả về DUY NHẤT một khối mã ```latex ... ```. KHÔNG giải thích, KHÔNG chào hỏi.
+                        """
+
+                        payload = [image_to_process, refine_prompt] if image_to_process is not None else [refine_prompt]
+
+                        with st.spinner("⚡ AI đang cập nhật lại hình vẽ..."):
+                            generated_text, err = generate_fast(client, payload)
+                            if generated_text:
+                                new_tikz_code = clean_tikz_code(generated_text)
+                                st.session_state["tikz_code"] = new_tikz_code
+
+                                img_bytes, render_err = render_tikz(new_tikz_code, output_format=render_format)
+                                if img_bytes:
+                                    st.session_state["rendered_image"] = img_bytes
+                                    st.session_state["render_mime"] = "image/png" if render_format == "png" else "image/svg+xml"
+                                    st.success("✨ Cập nhật hình vẽ thành công!")
+                                    st.rerun()
+                                else:
+                                    st.error(f"❌ {render_err}")
+                            else:
+                                st.error(f"❌ {err}")
             else:
                 st.info("👈 Hãy dán hoặc tải ảnh đề bài ở cột bên trái.")
 else:
