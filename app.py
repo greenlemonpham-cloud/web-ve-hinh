@@ -138,9 +138,10 @@ def generate_fast(client: OpenAI, contents_payload: list):
                 "text": item
             })
 
-    # 2. Danh sách các Model Vision miễn phí & mạnh mẽ trên OpenRouter (Tự động fallback)
+    # 2. Danh sách các Model Vision chuẩn mới nhất trên OpenRouter
     vision_models = [
-        "google/gemini-2.0-flash-lite-001:free",
+        "google/gemini-2.0-flash-exp:free",
+        "google/gemini-2.0-flash-lite-preview-02-05:free",
         "qwen/qwen-2.5-vl-72b-instruct:free",
         "meta-llama/llama-3.2-11b-vision-instruct:free",
         "google/gemini-2.0-flash-001",
