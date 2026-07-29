@@ -153,7 +153,7 @@ if api_key:
 
             # Hiển thị nút Dán nếu đã cài thư viện (kèm dynamic key để xoá)
             if HAS_PASTE_BUTTON:
-                st.markdown("📋 **Dán nhanh từ bộ nhớ tạm (Chụp màn hình xong bấm nút):**")
+                st.markdown("📋 **Dán nhanh từ bộ nhớ tạm:**")
                 paste_result = paste_image_button(
                     label="📋 Bấm vào đây để Dán ảnh đã chụp",
                     background_color="#2563EB",
@@ -183,7 +183,7 @@ if api_key:
                 st.image(image_to_process, caption="Ảnh đề bài đã sẵn sàng", use_container_width=True)
 
                 # Nút xóa ảnh input
-                if st.button("❌ Xóa ảnh & Làm mới", use_container_width=True):
+                if st.button("❌ Xóa ảnh", use_container_width=True):
                     st.session_state["paste_key"] += 1
                     st.session_state["rendered_image"] = None
                     st.session_state["tikz_code"] = ""
