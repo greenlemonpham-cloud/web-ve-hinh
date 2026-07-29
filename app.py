@@ -6,7 +6,7 @@ import urllib.parse
 import urllib.request
 import urllib.error
 from PIL import Image
-from google import genai
+from openai import OpenAI
 import streamlit as st
 
 # Kiểm tra & tự động bắt lỗi nếu chưa cài streamlit-paste-button
@@ -20,13 +20,13 @@ except ImportError:
 # 1. CẤU HÌNH GIAO DIỆN
 # ==========================================
 st.set_page_config(
-    page_title="Chuyển Ảnh Bài Toán Sang TikZ",
+    page_title="Chuyển Ảnh Bài Toán Sang TikZ (OpenRouter)",
     page_icon="📐",
     layout="wide",
 )
 
 st.title("📐 AI Chuyển Đề Bài Hình Học Sang Hình Vẽ TikZ")
-st.markdown("Made by levu")
+st.markdown("Made by levu | Powered by **OpenRouter API**")
 
 # ==========================================
 # 2. CẤU HÌNH API KEY & ĐỊNH DẠNG TẠI SIDEBAR
@@ -37,10 +37,10 @@ if "user_api_key" not in st.session_state:
     st.session_state["user_api_key"] = ""
 
 input_key = st.sidebar.text_input(
-    "Nhập Gemini API Key của bạn:",
+    "Nhập OpenRouter API Key:",
     value=st.session_state["user_api_key"],
     type="password",
-    help="Copy mã API key từ Google AI Studio và dán vào đây",
+    help="Lấy mã API key miễn phí tại: https://openrouter.ai/keys",
 )
 
 if input_key:
@@ -48,7 +48,7 @@ if input_key:
 
 api_key = st.session_state["user_api_key"]
 
-# [MỤC 2] Tùy chọn định dạng đầu ra (PNG hoặc SVG)
+# Tùy chọn định dạng đầu ra (PNG hoặc SVG)
 render_format = st.sidebar.selectbox(
     "🖼️ Định dạng ảnh đầu ra:",
     options=["png", "svg"],
@@ -57,8 +57,11 @@ render_format = st.sidebar.selectbox(
 )
 
 @st.cache_resource
-def get_gemini_client(key: str):
-    return genai.Client(api_key=key)
+def get_openrouter_client(key: str):
+    return OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=key,
+    )
 
 # ==========================================
 # 3. HÀM RENDER TIKZ & AI
@@ -84,11 +87,7 @@ def clean_tikz_code(raw_text: str) -> str:
     return clean_body
 
 def render_tikz(tikz_code: str, output_format: str = "png") -> tuple[bytes | None, str | None]:
-    """
-    Biên dịch TikZ qua Kroki API.
-    - Hỗ trợ định dạng PNG và SVG (Mục 2)
-    - Đọc chi tiết nguyên nhân lỗi từ Server Kroki (Mục 5)
-    """
+    """Biên dịch TikZ qua Kroki API"""
     full_doc = f"""\\documentclass[tikz,border=5pt]{{standalone}}
 \\usepackage{{amsmath,amssymb}}
 \\usetikzlibrary{{calc,arrows,arrows.meta,intersections,shapes,patterns,angles,quotes}}
@@ -108,7 +107,6 @@ def render_tikz(tikz_code: str, output_format: str = "png") -> tuple[bytes | Non
                 return response.read(), None
             return None, f"Lỗi Kroki: HTTP {response.status}"
     except urllib.error.HTTPError as e:
-        # [MỤC 5] Đọc thông báo lỗi cú pháp chi tiết từ Server Kroki
         try:
             error_details = e.read().decode('utf-8', errors='ignore')
             clean_err = re.sub(r'<[^>]+>', '', error_details).strip()
@@ -118,35 +116,60 @@ def render_tikz(tikz_code: str, output_format: str = "png") -> tuple[bytes | Non
     except Exception as e:
         return None, f"Lỗi kết nối Render: {e}"
 
-def generate_fast(client, contents_payload):
+def generate_fast(client: OpenAI, contents_payload: list):
     """
-    Hàm gọi AI xử lý danh sách payload (ảnh + prompt hoặc prompt điều chỉnh)
+    Hàm gọi OpenRouter API chuyển đổi payload (ảnh + prompt) sang format chuẩn OpenAI
     """
-    fast_models = [
-        "gemini-2.0-flash",
-        "gemini-2.0-flash-lite",
+    # 1. Chuyển đổi payload thành message content chuẩn OpenAI Vision
+    user_content = []
+    for item in contents_payload:
+        if isinstance(item, Image.Image):
+            # Mã hóa ảnh PIL sang dạng base64
+            buffered = io.BytesIO()
+            item.save(buffered, format="PNG")
+            img_b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+            user_content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{img_b64}"}
+            })
+        elif isinstance(item, str):
+            user_content.append({
+                "type": "text",
+                "text": item
+            })
+
+    # 2. Danh sách các Model Vision miễn phí & mạnh mẽ trên OpenRouter (Tự động fallback)
+    vision_models = [
+        "google/gemini-2.0-flash-lite-001:free",
+        "qwen/qwen-2.5-vl-72b-instruct:free",
+        "meta-llama/llama-3.2-11b-vision-instruct:free",
+        "google/gemini-2.0-flash-001",
     ]
 
     error_logs = []
-    for model_name in fast_models:
+    for model_name in vision_models:
         try:
-            response = client.models.generate_content(
+            response = client.chat.completions.create(
                 model=model_name,
-                contents=contents_payload,
+                messages=[{"role": "user", "content": user_content}],
+                extra_headers={
+                    "HTTP-Referer": "https://streamlit.io",
+                    "X-Title": "TikZ Generator",
+                }
             )
-            if response and response.text:
-                return response.text, None
+            if response and response.choices and response.choices[0].message.content:
+                return response.choices[0].message.content, None
         except Exception as e:
             err_msg = str(e)
-            if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
-                error_logs.append(f"• {model_name}: ⚠️ Đã hết hạn mức Free Quota của Google cho Key này.")
-                time.sleep(2)
+            if "429" in err_msg or "rate_limit" in err_msg.lower():
+                error_logs.append(f"• {model_name}: ⚠️ Bận hoặc chạm giới hạn request, đang chuyển model khác...")
+                time.sleep(1)
             else:
                 error_logs.append(f"• {model_name}: {err_msg}")
             continue
 
     detailed_error = "\n".join(error_logs)
-    return None, f"❌ AI chưa thể xử lý. Chi tiết lỗi từ Google API:\n{detailed_error}"
+    return None, f"❌ AI chưa thể xử lý. Chi tiết lỗi từ OpenRouter:\n{detailed_error}"
 
 # ==========================================
 # 4. LUỒNG XỬ LÝ CHÍNH
@@ -162,9 +185,9 @@ if "render_mime" not in st.session_state:
 
 if api_key:
     try:
-        client = get_gemini_client(api_key.strip())
+        client = get_openrouter_client(api_key.strip())
     except Exception as e:
-        st.error(f"Lỗi khởi tạo Gemini Client: {e}")
+        st.error(f"Lỗi khởi tạo OpenRouter Client: {e}")
         client = None
 
     if client:
@@ -204,7 +227,6 @@ if api_key:
 
             # Xem trước ảnh & Chạy AI
             if image_to_process is not None:
-                # Chuẩn hóa PIL Image RGB
                 try:
                     if isinstance(image_to_process, bytes):
                         image_to_process = Image.open(io.BytesIO(image_to_process))
@@ -244,14 +266,13 @@ if api_key:
                     Chỉ cung cấp DUY NHẤT một khối mã (code block) bằng ngôn ngữ ```latex ... ```. KHÔNG giải thích, KHÔNG chào hỏi, KHÔNG thêm bất kỳ văn bản nào khác bên ngoài khối mã latex.
                     """
 
-                    with st.spinner("⚡ AI đang phân tích và tạo hình..."):
+                    with st.spinner("⚡ OpenRouter AI đang phân tích và tạo hình..."):
                         generated_text, err = generate_fast(client, [image_to_process, prompt])
 
                         if generated_text:
                             tikz_code = clean_tikz_code(generated_text)
                             st.session_state["tikz_code"] = tikz_code
 
-                            # [MỤC 2 & 5] Render theo format đã chọn & đọc lỗi nếu có
                             img_bytes, render_err = render_tikz(tikz_code, output_format=render_format)
                             if img_bytes:
                                 st.session_state["rendered_image"] = img_bytes
@@ -266,14 +287,12 @@ if api_key:
             st.subheader("2. Kết quả Hình vẽ Minh họa")
 
             if st.session_state["rendered_image"] is not None:
-                # Hiển thị kết quả hình ảnh
                 st.image(
                     st.session_state["rendered_image"], 
                     caption=f"Hình vẽ TikZ kết quả ({render_format.upper()})", 
                     use_container_width=True
                 )
                 
-                # [MỤC 2] Nút tải ảnh động theo định dạng đã chọn (PNG/SVG)
                 st.download_button(
                     label=f"📥 Tải ảnh {render_format.upper()} về máy",
                     data=st.session_state["rendered_image"],
@@ -283,12 +302,10 @@ if api_key:
                     use_container_width=True,
                 )
 
-                # Xem & copy mã TikZ
                 with st.expander("📝 Xem / Copy Mã TikZ"):
                     st.code(st.session_state["tikz_code"], language="latex")
                     st.markdown("[🌐 Mở trang hotrohoctap.com/1ai/6tikz](https://hotrohoctap.com/1ai/6tikz/)")
 
-                # [MỤC 4] Tính năng Yêu cầu AI chỉnh sửa hình vẽ
                 st.markdown("---")
                 st.markdown("### ✏️ Yêu cầu AI sửa hình vẽ này")
                 refine_input = st.text_input(
@@ -339,4 +356,4 @@ if api_key:
             else:
                 st.info("👈 Hãy dán hoặc tải ảnh đề bài ở cột bên trái.")
 else:
-    st.warning("⚠️ Vui lòng nhập Gemini API Key ở thanh sidebar bên trái.")
+    st.warning("⚠️ Vui lòng nhập OpenRouter API Key ở thanh sidebar bên trái.")
