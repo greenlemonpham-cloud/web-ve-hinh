@@ -26,7 +26,7 @@ st.set_page_config(
 )
 
 st.title("📐 AI Chuyển Đề Bài Hình Học Sang Hình Vẽ TikZ")
-st.markdown("Made by levu | **Tự động thử tất cả AI Vision trên OpenRouter**")
+st.markdown("Made by levu | **Tự động tối ưu thẩm mỹ hình vẽ TikZ**")
 
 # ==========================================
 # 2. CẤU HÌNH API KEY & ĐỊNH DẠNG TẠI SIDEBAR
@@ -89,9 +89,9 @@ def clean_tikz_code(raw_text: str) -> str:
     return clean_body
 
 def render_tikz(tikz_code: str, output_format: str = "png") -> tuple[bytes | None, str | None]:
-    full_doc = f"""\\documentclass[tikz,border=5pt]{{standalone}}
+    full_doc = f"""\\documentclass[tikz,border=10pt]{{standalone}}
 \\usepackage{{amsmath,amssymb}}
-\\usetikzlibrary{{calc,arrows,arrows.meta,intersections,shapes,patterns,angles,quotes}}
+\\usetikzlibrary{{calc,arrows,arrows.meta,intersections,shapes,patterns,angles,quotes,positioning,3d}}
 \\begin{{document}}
 {tikz_code}
 \\end{{document}}"""
@@ -119,9 +119,8 @@ def render_tikz(tikz_code: str, output_format: str = "png") -> tuple[bytes | Non
 
 def generate_fast_auto(client: OpenAI, contents_payload: list):
     """
-    Tự động duyệt qua tất cả AI Vision khả dụng trên OpenRouter
+    Chỉ dùng các Vision Model Top-Tier hàng đầu về Toán & TikZ Geometry
     """
-    # 1. Chuyển đổi payload sang định dạng OpenAI Vision chuẩn
     user_content = []
     for item in contents_payload:
         if isinstance(item, Image.Image):
@@ -138,50 +137,63 @@ def generate_fast_auto(client: OpenAI, contents_payload: list):
                 "text": item
             })
 
-    # 2. Danh sách TOÀN BỘ các dòng AI Vision mạnh nhất
-    base_models = [
+    # Chỉ lọc giữ lại các Model vẽ TikZ đẹp nhất
+    top_models = [
         "google/gemini-2.0-flash-001",
-        "google/gemini-2.0-flash-lite-001",
-        "google/gemini-flash-1.5",
-        "google/gemini-flash-1.5-8b",
         "qwen/qwen-2.5-vl-72b-instruct",
-        "meta-llama/llama-3.2-11b-vision-instruct",
-        "mistralai/pixtral-12b",
-        "openai/gpt-4o-mini",
+        "google/gemini-flash-1.5",
+        "google/gemini-2.0-flash-lite-001",
+        "qwen/qwen-2.5-vl-72b-instruct:free",
+        "google/gemini-2.0-flash-001:free"
     ]
 
-    # Tự động kết hợp cả bản chuẩn và biến thể :free
-    all_candidates = []
-    for m in base_models:
-        all_candidates.append(m)
-        all_candidates.append(f"{m}:free")
-
     error_logs = []
-    
-    # 3. Vòng lặp tự động chạy thử từng Model
-    for model_name in all_candidates:
+    for model_name in top_models:
         try:
             response = client.chat.completions.create(
                 model=model_name,
                 messages=[{"role": "user", "content": user_content}],
                 extra_headers={
                     "HTTP-Referer": "https://streamlit.io",
-                    "X-Title": "TikZ Generator",
+                    "X-Title": "TikZ High Quality Generator",
                 },
-                timeout=25
+                timeout=30
             )
             if response and response.choices and response.choices[0].message.content:
-                # Thành công -> Trả về kết quả ngay
-                return response.choices[0].message.content, None
+                return response.choices[0].message.content, model_name, None
         except Exception as e:
             err_msg = str(e)
-            # Chỉ ghi nhận lỗi rút gọn để tránh ngợp giao diện
             if "404" not in err_msg and "400" not in err_msg:
-                error_logs.append(f"• {model_name}: {err_msg[:120]}")
+                error_logs.append(f"• {model_name}: {err_msg[:100]}")
             continue
 
-    detailed_error = "\n".join(error_logs) if error_logs else "Tất cả các Model AI hiện tại đều bận hoặc không phản hồi."
-    return None, f"❌ Chưa thể xử lý bài toán. Chi tiết phản hồi:\n{detailed_error}"
+    detailed_error = "\n".join(error_logs) if error_logs else "Tất cả AI Model cao cấp đều bận. Hãy thử lại sau vài giây."
+    return None, None, f"❌ Chưa thể xử lý bài toán. Chi tiết:\n{detailed_error}"
+
+# Prompt Tối ưu Thẩm mỹ Thiết kế TikZ
+AESTHETIC_PROMPT = """
+Đóng vai: Chuyên gia thiết kế đồ họa LaTeX/TikZ đỉnh cao cho Sách Giáo Khoa Toán.
+
+Mục tiêu: Phân tích hình ảnh đề bài và tạo mã TikZ ĐẸP MẮT, CHUẨN XÁC, SẮC NÉT.
+
+QUY TẮC THẨM MỸ & KỸ THUẬT BẮT BUỘC:
+1. Cấu trúc môi trường:
+   - Dùng `\\begin{tikzpicture}[scale=1.2, >=stealth, line join=round, line cap=round]` để hình vẽ thanh thoát, không bị đứt góc.
+2. Đường nét & Màu sắc:
+   - Nét chính: Dùng `thick`, màu `blue!70!black` hoặc `black!85`.
+   - Đường khuất/dóng/phụ: Dùng `dashed, thin, gray!70`.
+   - Góc vuông/ký hiệu góc: Dùng thư viện `angles, quotes`, nét mảnh `thin`.
+3. Nhãn điểm & Chữ (Labels):
+   - Tuyệt đối KHÔNG để tên điểm (A, B, C...) đè lên đường thẳng hay góc.
+   - Luôn chỉ định vị trí nhãn rõ ràng: `node[above left]`, `node[below right]`, `node[above]`.
+   - Tên điểm đặt trong công thức toán `$A$`, `$B$`, `$C$`.
+4. Tính chính xác không gian:
+   - Hình 3D: Dùng hệ tọa độ góc nhìn chuẩn `[x={(-0.6cm,-0.3cm)}, y={(1cm,0cm)}, z={(0cm,1cm)}]`.
+   - Hình phẳng: Dùng thư viện `calc` hoặc `intersections` tính tọa độ điểm giao chính xác.
+
+Định dạng đầu ra:
+Chỉ trả về DUY NHẤT 1 khối mã ```latex ... ```. KHÔNG thêm bất kỳ lời giải thích nào.
+"""
 
 # ==========================================
 # 4. LUỒNG XỬ LÝ CHÍNH
@@ -194,6 +206,8 @@ if "tikz_code" not in st.session_state:
     st.session_state["tikz_code"] = ""
 if "render_mime" not in st.session_state:
     st.session_state["render_mime"] = "image/png"
+if "used_model" not in st.session_state:
+    st.session_state["used_model"] = ""
 
 if api_key:
     client = get_openrouter_client(api_key.strip())
@@ -206,7 +220,6 @@ if api_key:
 
             image_to_process = None
 
-            # Dán ảnh từ clipboard
             if HAS_PASTE_BUTTON:
                 st.markdown("📋 **Dán nhanh từ bộ nhớ tạm:**")
                 paste_result = paste_image_button(
@@ -221,7 +234,6 @@ if api_key:
             else:
                 st.warning("💡 Mẹo: Chạy `pip install streamlit-paste-button` trong Terminal để bật nút dán ảnh 1-click.")
 
-            # Tải file dự phòng
             uploaded_file = st.file_uploader(
                 "Chọn tệp ảnh từ máy tính / Kéo thả vào đây:",
                 type=["jpg", "jpeg", "png"],
@@ -233,7 +245,6 @@ if api_key:
                 except Exception:
                     st.error("Không thể đọc định dạng ảnh này.")
 
-            # Xem trước ảnh & Chạy AI
             if image_to_process is not None:
                 try:
                     if isinstance(image_to_process, bytes):
@@ -249,43 +260,23 @@ if api_key:
                     st.session_state["paste_key"] += 1
                     st.session_state["rendered_image"] = None
                     st.session_state["tikz_code"] = ""
+                    st.session_state["used_model"] = ""
                     st.rerun()
 
-                if st.button("🚀 Chuyển đổi & Vẽ hình ngay", type="primary", use_container_width=True):
-                    prompt = """
-                    Đóng vai (Role):
-                    Bạn là một Giáo sư Toán học và Chuyên gia bậc thầy về lập trình LaTeX/TikZ/PGFPlots.
-                    
-                    Mục tiêu (Objective):
-                    Hãy phân tích hình ảnh bài toán/đồ thị được cung cấp và chuyển đổi chính xác thành mã TikZ hoàn chỉnh, có thể biên dịch (compile) thành công ngay lập tức.
-                    
-                    Yêu cầu kỹ thuật nghiêm ngặt (Strict Guidelines):
-                    1. Môi trường: Luôn sử dụng \\documentclass[tikz, border=5mm]{standalone}. Nếu là đồ thị hàm số phức tạp thì dùng thêm gói pgfplots với \\usepackage{pgfplots} và \\pgfplotsset{compat=1.18}.
-                    2. Thư viện: Khai báo đầy đủ các thư viện cần thiết như \\usetikzlibrary{calc, angles, quotes, intersections, through, positioning, 3d, arrows.meta}.
-                    3. Tọa độ & Điểm: Dùng hệ tọa độ Oxy rõ ràng. Ưu tiên tính toán tọa độ bằng thư viện `calc` hoặc `intersections`. Định nghĩa các điểm \\coordinate trước khi vẽ.
-                    4. Tính thẩm mỹ:
-                       - Nét vẽ: Nét chính dùng thick/thin, nét đứt/khuất/đường dóng dùng `dashed` màu nhạt (`gray!70`).
-                       - Ký hiệu: Góc vuông dùng thư viện `angles`, đoạn thẳng bằng nhau dùng tick mark.
-                       - Nhãn: Ký tự toán đặt trong dấu $ $, vị trí (above, below, left, right...) tránh đè nét vẽ.
-                       - Hình 3D: Dùng hệ tọa độ góc nhìn chuẩn [x={(-0.6cm,-0.4cm)}, y={(1cm,0cm)}, z={(0cm,1cm)}] để góc nhìn không bị vỡ.
-                    5. Cấu trúc code: Có chú thích % rõ ràng cho từng phần.
-                    
-                    Định dạng đầu ra (Output Format):
-                    Chỉ cung cấp DUY NHẤT một khối mã (code block) bằng ngôn ngữ ```latex ... ```. KHÔNG giải thích, KHÔNG chào hỏi, KHÔNG thêm bất kỳ văn bản nào khác bên ngoài khối mã latex.
-                    """
-
-                    with st.spinner("⚡ AI đang tự động tìm mô hình khả dụng và vẽ hình..."):
-                        generated_text, err = generate_fast_auto(client, [image_to_process, prompt])
+                if st.button("🚀 Chuyển đổi & Vẽ hình đẹp ngay", type="primary", use_container_width=True):
+                    with st.spinner("⚡ AI cao cấp đang tính toán tọa độ & vẽ hình đẹp..."):
+                        generated_text, model_used, err = generate_fast_auto(client, [image_to_process, AESTHETIC_PROMPT])
 
                         if generated_text:
                             tikz_code = clean_tikz_code(generated_text)
                             st.session_state["tikz_code"] = tikz_code
+                            st.session_state["used_model"] = model_used
 
                             img_bytes, render_err = render_tikz(tikz_code, output_format=render_format)
                             if img_bytes:
                                 st.session_state["rendered_image"] = img_bytes
                                 st.session_state["render_mime"] = "image/png" if render_format == "png" else "image/svg+xml"
-                                st.success("⚡ Vẽ hình thành công!")
+                                st.success(f"⚡ Vẽ thành công bằng AI: **{model_used}**")
                             else:
                                 st.error(f"❌ {render_err}")
                         else:
@@ -295,6 +286,7 @@ if api_key:
             st.subheader("2. Kết quả Hình vẽ Minh họa")
 
             if st.session_state["rendered_image"] is not None:
+                st.caption(f"🤖 Đã vẽ bằng AI Model: `{st.session_state['used_model']}`")
                 st.image(
                     st.session_state["rendered_image"], 
                     caption=f"Hình vẽ TikZ kết quả ({render_format.upper()})", 
@@ -302,7 +294,7 @@ if api_key:
                 )
                 
                 st.download_button(
-                    label=f"📥 Tải ảnh {render_format.upper()} về máy",
+                    label=f"📥 Tải ảnh {render_format.upper()} chất lượng cao",
                     data=st.session_state["rendered_image"],
                     file_name=f"hinh_hoc_tikz.{render_format}",
                     mime=st.session_state["render_mime"],
@@ -310,14 +302,14 @@ if api_key:
                     use_container_width=True,
                 )
 
-                with st.expander("📝 Xem / Copy Mã TikZ"):
+                with st.expander("📝 Xem / Copy Mã TikZ Tối Ưu"):
                     st.code(st.session_state["tikz_code"], language="latex")
                     st.markdown("[🌐 Mở trang hotrohoctap.com/1ai/6tikz](https://hotrohoctap.com/1ai/6tikz/)")
 
                 st.markdown("---")
                 st.markdown("### ✏️ Yêu cầu AI sửa hình vẽ này")
                 refine_input = st.text_input(
-                    "Nhập yêu cầu sửa (VD: Thêm đường cao AH nét đứt, Đổi điểm C thành C'):",
+                    "Nhập yêu cầu sửa (VD: Dịch nhãn A lên trên chút, đổi màu đường cao thành đỏ):",
                     key="refine_input_text"
                 )
                 
@@ -326,36 +318,34 @@ if api_key:
                         st.warning("⚠️ Vui lòng nhập yêu cầu cần chỉnh sửa.")
                     else:
                         refine_prompt = f"""
-                        Role: Giáo sư Toán học & Chuyên gia bậc thầy về TikZ.
-                        Nhiệm vụ: Chỉnh sửa mã TikZ hiện tại theo yêu cầu người dùng.
+                        Role: Chuyên gia thiết kế đồ họa LaTeX/TikZ.
+                        Nhiệm vụ: Chỉnh sửa mã TikZ hiện tại theo yêu cầu người dùng, đảm bảo giữ nguyên nét vẽ đẹp và chuẩn thẩm mỹ.
 
                         MÃ TIKZ HIỆN TẠI:
                         ```latex
                         {st.session_state["tikz_code"]}
                         ```
 
-                        YÊU CẦU CHỈNH SỬA TỪ NGUỜI DÙNG:
+                        YÊU CẦU CHỈNH SỬA:
                         {refine_input}
 
-                        Yêu cầu kỹ thuật:
-                        - Cập nhật chính xác mã TikZ dựa trên mã hiện tại và yêu cầu chỉnh sửa.
-                        - Giữ nguyên tính chính xác của hình học và thẩm mỹ nét vẽ.
-                        - Chỉ trả về DUY NHẤT một khối mã ```latex ... ```. KHÔNG giải thích, KHÔNG chào hỏi.
+                        Chỉ trả về DUY NHẤT một khối mã ```latex ... ```. KHÔNG giải thích.
                         """
 
                         payload = [image_to_process, refine_prompt] if image_to_process is not None else [refine_prompt]
 
-                        with st.spinner("⚡ AI đang tự động xử lý cập nhật..."):
-                            generated_text, err = generate_fast_auto(client, payload)
+                        with st.spinner("⚡ AI đang cập nhật nét vẽ..."):
+                            generated_text, model_used, err = generate_fast_auto(client, payload)
                             if generated_text:
                                 new_tikz_code = clean_tikz_code(generated_text)
                                 st.session_state["tikz_code"] = new_tikz_code
+                                st.session_state["used_model"] = model_used
 
                                 img_bytes, render_err = render_tikz(new_tikz_code, output_format=render_format)
                                 if img_bytes:
                                     st.session_state["rendered_image"] = img_bytes
                                     st.session_state["render_mime"] = "image/png" if render_format == "png" else "image/svg+xml"
-                                    st.success("✨ Cập nhật hình vẽ thành công!")
+                                    st.success(f"✨ Cập nhật thành công bởi **{model_used}**!")
                                     st.rerun()
                                 else:
                                     st.error(f"❌ {render_err}")
