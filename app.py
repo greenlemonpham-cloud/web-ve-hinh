@@ -176,13 +176,26 @@ if api_key:
 
                 if st.button("🚀 Chuyển đổi & Vẽ hình ngay", type="primary", use_container_width=True):
                     prompt = """
-                    Bạn là một chuyên gia toán học và ngôn ngữ vẽ hình TikZ trong LaTeX.
-                    Hãy phân tích kỹ ảnh bài toán hình học này:
-                    1. Xác định vị trí các điểm, đường thẳng, góc vuông, ký hiệu bằng nhau, đường tròn.
-                    2. Viết mã TikZ hoàn chỉnh đặt trong khối \\begin{tikzpicture} ... \\end{tikzpicture}.
-                    3. Đảm bảo tên các điểm, độ dài và góc khớp chính xác với ảnh bài toán.
-                    4. CHỈ xuất duy nhất khối mã trong ```latex \\begin{tikzpicture} ... \\end{tikzpicture} ```. KHÔNG thêm bất kỳ câu giải thích nào.
-                    """
+                Đóng vai (Role):
+                Bạn là một Giáo sư Toán học và Chuyên gia bậc thầy về lập trình LaTeX/TikZ/PGFPlots.
+                
+                Mục tiêu (Objective):
+                Hãy phân tích hình ảnh bài toán/đồ thị được cung cấp và chuyển đổi chính xác thành mã TikZ hoàn chỉnh, có thể biên dịch (compile) thành công ngay lập tức.
+                
+                Yêu cầu kỹ thuật nghiêm ngặt (Strict Guidelines):
+                1. Môi trường: Luôn sử dụng \\documentclass[tikz, border=5mm]{standalone}. Nếu là đồ thị hàm số phức tạp thì dùng thêm gói pgfplots với \\usepackage{pgfplots} và \\pgfplotsset{compat=1.18}.
+                2. Thư viện: Khai báo đầy đủ các thư viện cần thiết như \\usetikzlibrary{calc, angles, quotes, intersections, through, positioning, 3d, arrows.meta}.
+                3. Tọa độ & Điểm: Dùng hệ tọa độ Oxy rõ ràng. Ưu tiên tính toán tọa độ bằng thư viện `calc` hoặc `intersections`. Định nghĩa các điểm \\coordinate trước khi vẽ.
+                4. Tính thẩm mỹ:
+                   - Nét vẽ: Nét chính dùng thick/thin, nét đứt/khuất/đường dóng dùng `dashed` màu nhạt (`gray!70`).
+                   - Ký hiệu: Góc vuông dùng thư viện `angles`, đoạn thẳng bằng nhau dùng tick mark.
+                   - Nhãn: Ký tự toán đặt trong dấu $ $, vị trí (above, below, left, right...) tránh đè nét vẽ.
+                   - Hình 3D: Dùng hệ tọa độ góc nhìn chuẩn [x={(-0.6cm,-0.4cm)}, y={(1cm,0cm)}, z={(0cm,1cm)}] để góc nhìn không bị vỡ.
+                5. Cấu trúc code: Có chú thích % rõ ràng cho từng phần (khai báo điểm, vẽ đường, đánh dấu góc...).
+                
+                Định dạng đầu ra (Output Format):
+                Chỉ cung cấp DUY NHẤT một khối mã (code block) bằng ngôn ngữ ```latex ... ```. KHÔNG giải thích, KHÔNG chào hỏi, KHÔNG thêm bất kỳ văn bản nào khác bên ngoài khối mã latex.
+                """
 
                     with st.spinner("⚡ AI đang phân tích và tạo hình..."):
                         generated_text, err = generate_fast(client, image_to_process, prompt)
