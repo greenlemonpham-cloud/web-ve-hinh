@@ -97,10 +97,23 @@ def render_tikz(tikz_code: str) -> tuple[bytes | None, str | None]:
 
 def generate_fast(client, image, prompt):
     """
-    Tối ưu hóa danh sách mô hình dự phòng để tránh lỗi hết Quota
+    Hàm gọi AI chuẩn hóa dữ liệu ảnh và hiện LỖI THẬT từ Google
     """
+    # 1. Chuẩn hóa dữ liệu ảnh sang định dạng PIL RGB để Google SDK không bị lỗi
+    try:
+        if isinstance(image, bytes):
+            image = Image.open(io.BytesIO(image))
+        elif not isinstance(image, Image.Image):
+            # Trường hợp ảnh từ streamlit-paste-button
+            image = Image.open(io.BytesIO(image))
+            
+        if image.mode != "RGB":
+            image = image.convert("RGB")
+    except Exception as img_err:
+        return None, f"Lỗi xử lý định dạng ảnh: {img_err}"
+
+    # 2. Danh sách mô hình Gemini ổn định nhất
     fast_models = [
-        "gemini-2.5-flash",
         "gemini-2.0-flash",
         "gemini-1.5-flash",
         "gemini-1.5-flash-8b",
@@ -119,10 +132,11 @@ def generate_fast(client, image, prompt):
             error_logs.append(f"• {model_name}: {e}")
             continue
 
+    # 3. Trả về CHI TIẾT LỖI THẬT thay vì thông báo Quota giả
+    detailed_error = "\n".join(error_logs)
     return (
         None,
-        "⚠️ Tất cả mô hình đều đã hết Quota trong ngày.\n"
-        "Vui lòng tạo API Key mới trong Project mới tại https://aistudio.google.com/",
+        f"❌ AI chưa thể xử lý. Chi tiết lỗi từ Google API:\n{detailed_error}"
     )
 
 # ==========================================
