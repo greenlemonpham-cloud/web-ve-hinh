@@ -128,7 +128,12 @@ def generate_fast(client, image, prompt):
             if response and response.text:
                 return response.text, None
         except Exception as e:
-            error_logs.append(f"• {model_name}: {e}")
+            err_msg = str(e)
+            if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
+                error_logs.append(f"• {model_name}: ⚠️ Đã hết hạn mức Free Quota của Google cho Key này.")
+                time.sleep(2)
+            else:
+                error_logs.append(f"• {model_name}: {err_msg}")
             continue
 
     # 3. Trả về chi tiết lỗi nếu không mô hình nào chạy được
