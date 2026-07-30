@@ -149,9 +149,14 @@ def render_tikz(tikz_code: str, output_format: str = "png") -> tuple[bytes | Non
         return None, f"Lỗi kết nối Render: {e}"
 
 def generate_fast(client, contents_payload):
+    # Các model đa phương thức phù hợp cho bài toán ảnh -> mã TikZ.
+    # Ưu tiên model mới/ổn định trước, sau đó fallback về model nhẹ hơn.
     fast_models = [
-        "gemini-2.0-flash",
-        "gemini-2.0-flash-lite",
+        "gemini-3.5-flash",
+        "gemini-3.1-flash-lite",
+        "gemini-2.5-pro",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
     ]
 
     error_logs = []
