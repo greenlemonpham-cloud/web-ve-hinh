@@ -26,10 +26,10 @@ st.set_page_config(
 )
 
 st.title("📐 AI Chuyển Đề Bài Hình Học Sang Hình Vẽ TikZ")
-st.markdown("Made by levu | **Có tính năng đếm ngược thời gian chờ Quota API**")
+st.markdown("Made by levu | **Hiển thị chính xác Model AI xử lý thành công**")
 
 # ==========================================
-# 2. KHỞI TẠO SESSION STATE QUẢN LÝ THỜI GIAN
+# 2. KHỞI TẠO SESSION STATE QUẢN LÝ THỜI GIAN & MODEL
 # ==========================================
 if "paste_key" not in st.session_state:
     st.session_state["paste_key"] = 0
@@ -41,6 +41,8 @@ if "render_mime" not in st.session_state:
     st.session_state["render_mime"] = "image/png"
 if "cooldown_until" not in st.session_state:
     st.session_state["cooldown_until"] = 0  # Timestamp thời điểm hết Cooldown
+if "used_model" not in st.session_state:
+    st.session_state["used_model"] = ""     # Lưu tên model xử lý thành công
 
 # ==========================================
 # 3. CẤU HÌNH API KEY & SIDEBAR
@@ -82,7 +84,7 @@ def get_gemini_client(key: str):
     return genai.Client(api_key=key)
 
 # ==========================================
-# 4. HÀM ĐẾM NGƯỢC & RENDER TIKZ
+# 4. HÀM ĐẾM NGƯỢC & RENDER TIKZ & GENERATE AI
 # ==========================================
 def run_cooldown_countdown(seconds: int = 60, message: str = "Đang chờ hồi hạn mức (Quota) từ Google"):
     """Hàm chạy thanh đếm ngược thời gian thực trên Streamlit UI"""
@@ -149,13 +151,10 @@ def render_tikz(tikz_code: str, output_format: str = "png") -> tuple[bytes | Non
         return None, f"Lỗi kết nối Render: {e}"
 
 def generate_fast(client, contents_payload):
-    # Các model đa phương thức phù hợp cho bài toán ảnh -> mã TikZ.
-    # Ưu tiên model mới/ổn định trước, sau đó fallback về model nhẹ hơn.
+    # Danh sách model Gemini ổn định
     fast_models = [
-        "gemini-3.5-flash",
-        "gemini-3.1-flash-lite",
-        "gemini-2.5-pro",
         "gemini-2.5-flash",
+        "gemini-2.5-pro",
         "gemini-2.5-flash-lite",
     ]
 
@@ -169,7 +168,8 @@ def generate_fast(client, contents_payload):
                 contents=contents_payload,
             )
             if response and response.text:
-                return response.text, None, False
+                # TRẢ VỀ THÊM TÊN MODEL KHI THÀNH CÔNG
+                return response.text, None, False, model_name
         except Exception as e:
             err_msg = str(e)
             if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
@@ -180,7 +180,7 @@ def generate_fast(client, contents_payload):
             continue
 
     detailed_error = "\n".join(error_logs)
-    return None, f"❌ AI chưa thể xử lý. Chi tiết lỗi từ Google API:\n{detailed_error}", hit_rate_limit
+    return None, f"❌ AI chưa thể xử lý. Chi tiết lỗi từ Google API:\n{detailed_error}", hit_rate_limit, None
 
 # ==========================================
 # 5. LUỒNG XỬ LÝ CHÍNH
@@ -240,10 +240,10 @@ if api_key:
                     st.session_state["paste_key"] += 1
                     st.session_state["rendered_image"] = None
                     st.session_state["tikz_code"] = ""
+                    st.session_state["used_model"] = ""
                     st.rerun()
 
                 if st.button("🚀 Chuyển đổi & Vẽ hình ngay", type="primary", use_container_width=True):
-                    # Kiểm tra xem có đang trong thời gian Cooldown hay không
                     now = time.time()
                     if st.session_state["cooldown_until"] > now:
                         wait_sec = int(st.session_state["cooldown_until"] - now)
@@ -269,29 +269,32 @@ if api_key:
                         """
 
                         with st.spinner("⚡ AI đang phân tích và tạo hình..."):
-                            generated_text, err, hit_limit = generate_fast(client, [image_to_process, prompt])
+                            generated_text, err, hit_limit, used_model = generate_fast(client, [image_to_process, prompt])
 
                             if generated_text:
                                 tikz_code = clean_tikz_code(generated_text)
                                 st.session_state["tikz_code"] = tikz_code
+                                st.session_state["used_model"] = used_model
 
                                 img_bytes, render_err = render_tikz(tikz_code, output_format=render_format)
                                 if img_bytes:
                                     st.session_state["rendered_image"] = img_bytes
                                     st.session_state["render_mime"] = "image/png" if render_format == "png" else "image/svg+xml"
-                                    st.success("⚡ Vẽ hình thành công!")
+                                    st.success(f"⚡ Vẽ hình thành công! *(Được xử lý bởi model: **{used_model}**)*")
                                 else:
                                     st.error(f"❌ {render_err}")
                             else:
                                 st.error(f"❌ {err}")
                                 if hit_limit:
-                                    # Chạy đồng hồ đếm ngược 60 giây khi đụng hạn mức Rate Limit
                                     run_cooldown_countdown(60, "Tự động đếm ngược khôi phục Quota Google API")
 
         with col_right:
             st.subheader("2. Kết quả Hình vẽ Minh họa")
 
             if st.session_state["rendered_image"] is not None:
+                # HIỂN THỊ MODEL AI ĐÃ CHẠY NẰM Ở TRÊN KHU VỰC KẾT QUẢ
+                st.info(f"🤖 **Model AI đã xử lý:** `{st.session_state['used_model']}`")
+
                 st.image(
                     st.session_state["rendered_image"], 
                     caption=f"Hình vẽ TikZ kết quả ({render_format.upper()})", 
@@ -344,16 +347,17 @@ if api_key:
                         payload = [image_to_process, refine_prompt] if image_to_process is not None else [refine_prompt]
 
                         with st.spinner("⚡ AI đang cập nhật lại hình vẽ..."):
-                            generated_text, err, hit_limit = generate_fast(client, payload)
+                            generated_text, err, hit_limit, used_model = generate_fast(client, payload)
                             if generated_text:
                                 new_tikz_code = clean_tikz_code(generated_text)
                                 st.session_state["tikz_code"] = new_tikz_code
+                                st.session_state["used_model"] = used_model
 
                                 img_bytes, render_err = render_tikz(new_tikz_code, output_format=render_format)
                                 if img_bytes:
                                     st.session_state["rendered_image"] = img_bytes
                                     st.session_state["render_mime"] = "image/png" if render_format == "png" else "image/svg+xml"
-                                    st.success("✨ Cập nhật hình vẽ thành công!")
+                                    st.success(f"✨ Cập nhật hình vẽ thành công! *(Được xử lý bởi model: **{used_model}**)*")
                                     st.rerun()
                                 else:
                                     st.error(f"❌ {render_err}")
