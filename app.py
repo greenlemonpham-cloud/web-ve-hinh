@@ -1,16 +1,17 @@
 import os
 import sys
-import io
 
-# 1. Khắc phục triệt để lỗi mã hóa Windows ở cấp độ hệ thống
-if sys.stdout and hasattr(sys.stdout, 'buffer'):
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-if sys.stderr and hasattr(sys.stderr, 'buffer'):
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
-
+# Cấu hình UTF-8 an toàn cho cả Windows local và Streamlit Cloud Linux
 os.environ["PYTHONUTF8"] = "1"
 os.environ["PYTHONIOENCODING"] = "utf-8"
 
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
+import io
 import re
 import time
 import urllib.request
@@ -152,14 +153,9 @@ def render_tikz(tikz_code: str, output_format: str = "png") -> tuple[bytes | Non
         return None, f"Lỗi kết nối Render: {e}"
 
 def generate_fast(client, contents_payload):
-    # Chỉ gọi đúng các Model chính thức chuẩn 100% để không lãng phí Quota
-    ffast_models = [
-        "gemini-2.5-flash",
-        "gemini-2.5-pro",
-        "gemini-2.5-flash-lite",
+    # Khóa cố định duy nhất 1 model chuẩn để tiết kiệm tối đa Quota API (1 lượt bấm = 1 request)
+    fast_models = [
         "gemini-2.0-flash",
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
     ]
 
     error_logs = []
