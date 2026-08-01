@@ -1,7 +1,7 @@
 import os
 import sys
 
-# 1. Ép Python sử dụng UTF-8 trên toàn hệ thống (Khắc phục triệt để lỗi ASCII trên Windows)
+# 1. Ép mã hóa UTF-8 toàn hệ thống trên Windows
 os.environ["PYTHONUTF8"] = "1"
 os.environ["PYTHONIOENCODING"] = "utf-8"
 
@@ -14,7 +14,6 @@ if hasattr(sys.stdout, 'reconfigure'):
 import io
 import re
 import time
-import urllib.parse
 import urllib.request
 import urllib.error
 from PIL import Image
@@ -76,7 +75,7 @@ render_format = st.sidebar.selectbox(
     "🖼️ Định dạng ảnh đầu ra:",
     options=["png", "svg"],
     index=0,
-    help="Chọn SVG để có chất lượng ảnh vector nét tuyệt đối khi chèn vào đề thi Word/LaTeX"
+    help="Chọn SVG để có chất lượng ảnh vector nét tuyệt đối"
 )
 
 current_now = time.time()
@@ -93,15 +92,7 @@ def get_gemini_client(key: str):
 # ==========================================
 # HÀM XỬ LÝ CHUỖI & API
 # ==========================================
-def sanitize_text_for_api(text: str) -> str:
-    """Loại bỏ các ký tự Emoji gây lỗi encode ASCII/Unicode khi gọi API trên Windows"""
-    if not isinstance(text, str):
-        return text
-    # Xóa các ký tự emoji Unicode thuộc dải biểu tượng
-    clean_str = re.sub(r'[\U00010000-\U0010ffff\u2600-\u27bf\u1f300-\u1f9ff]', '', text)
-    return clean_str.strip()
-
-def run_cooldown_countdown(seconds: int = 60, message: str = "Đang chờ hồi hạn mức (Quota) từ Google"):
+def run_cooldown_countdown(seconds: int = 60, message: str = "Đang chờ hồi hạn mức Quota từ Google"):
     st.session_state["cooldown_until"] = time.time() + seconds
     progress_bar = st.progress(1.0)
     status_text = st.empty()
@@ -117,10 +108,6 @@ def run_cooldown_countdown(seconds: int = 60, message: str = "Đang chờ hồi 
 
 def clean_tikz_code(raw_text: str) -> str:
     if not raw_text:
-        return ""
-    
-    # Bỏ qua nếu chuỗi bị dính thông báo lỗi API
-    if any(err_word in raw_text for err_word in ["ascii", "RESOURCE_EXHAUSTED", "Lỗi", "429"]):
         return ""
 
     match_codeblock = re.search(r"\x60{3}(?:latex|tikz)?\n(.*?)\x60{3}", raw_text, re.DOTALL)
@@ -175,40 +162,37 @@ def render_tikz(tikz_code: str, output_format: str = "png") -> tuple[bytes | Non
         return None, f"Lỗi kết nối Render: {e}"
 
 def generate_fast(client, contents_payload):
+    # Danh sách các Model chính thức chuẩn từ Google AI Studio
     fast_models = [
         "gemini-2.5-flash",
         "gemini-2.5-pro",
         "gemini-2.5-flash-lite",
+        "gemini-2.0-flash",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro",
     ]
 
     error_logs = []
     hit_rate_limit = False
 
-    # Lọc sạch emoji khỏi toàn bộ nội dung gửi đến Google API
-    clean_payload = []
-    for item in contents_payload:
-        if isinstance(item, str):
-            clean_payload.append(sanitize_text_for_api(item))
-        else:
-            clean_payload.append(item)
-
     for model_name in fast_models:
         try:
             response = client.models.generate_content(
                 model=model_name,
-                contents=clean_payload,
+                contents=contents_payload,
             )
-            if response and response.text:
+            # Kiểm tra xem response có nội dung trả về hay không
+            if response and hasattr(response, "text") and response.text:
                 return response.text, None, False, model_name
-        except Exception as e:
-            err_msg = str(e)
-            if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
-                hit_rate_limit = True
-                error_logs.append(f"- {model_name}: Vượt quá hạn mức lượt gọi Free Quota.")
             else:
-                # Làm sạch thông báo lỗi trước khi hiển thị
-                safe_msg = sanitize_text_for_api(err_msg)
-                error_logs.append(f"- {model_name}: {safe_msg[:120]}")
+                error_logs.append(f"- {model_name}: Phản hồi rỗng (có thể do bộ lọc Safety từ chối).")
+        except Exception as e:
+            err_str = repr(e)  # Lấy đầy đủ thông tin exception
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                hit_rate_limit = True
+                error_logs.append(f"- {model_name}: Quá giới hạn lượt gọi (Free Quota 429).")
+            else:
+                error_logs.append(f"- {model_name}: {err_str[:150]}")
             continue
 
     detailed_error = "\n".join(error_logs)
@@ -278,15 +262,13 @@ if api_key:
                         wait_sec = int(st.session_state["cooldown_until"] - now)
                         st.warning(f"⚠️ Vui lòng chờ hết thời gian đếm ngược ({wait_sec}s nữa).")
                     else:
-                        prompt = """
-                        Role: Professor of Mathematics & Expert in TikZ/LaTeX.
-                        Objective: Analyze the geometric figure/diagram in the provided image and generate valid, compilable TikZ code.
-                        Guidelines:
-                        1. Use \\documentclass[tikz, border=5mm]{standalone}.
-                        2. Include libraries like calc, angles, quotes, intersections, 3d, arrows.meta.
-                        3. Define explicit coordinates before drawing paths.
-                        Output format: Return ONLY a code block ```latex ... ```.
-                        """
+                        # Prompt tối giản, trực diện để tránh bị bộ lọc AI chặn
+                        prompt = (
+                            "Convert the geometry figure in this image into valid TikZ code.\n"
+                            "Use \\documentclass[tikz, border=5mm]{standalone}.\n"
+                            "Include required tikz libraries (calc, angles, quotes, intersections).\n"
+                            "Return ONLY the code block ```latex ... ``` without extra text."
+                        )
 
                         with st.spinner("⚡ AI đang phân tích và tạo hình..."):
                             generated_text, err, hit_limit, used_model = generate_fast(client, [image_to_process, prompt])
@@ -304,7 +286,7 @@ if api_key:
                                 else:
                                     st.error(f"❌ {render_err}")
                             else:
-                                st.error(f"❌ {err}")
+                                st.error(f"{err}")
                                 if hit_limit:
                                     run_cooldown_countdown(60, "Tự động đếm ngược khôi phục Quota Google API")
 
@@ -347,20 +329,12 @@ if api_key:
                     elif not refine_input.strip():
                         st.warning("⚠️ Vui lòng nhập yêu cầu cần chỉnh sửa.")
                     else:
-                        refine_prompt = f"""
-                        Role: Professor of Mathematics & Expert in TikZ.
-                        Task: Modify the existing TikZ code according to the user request.
-
-                        CURRENT TIKZ CODE:
-                        ```latex
-                        {st.session_state["tikz_code"]}
-                        ```
-
-                        USER REQUEST:
-                        {refine_input}
-
-                        Output format: Return ONLY a code block ```latex ... ```.
-                        """
+                        refine_prompt = (
+                            f"Modify the following TikZ code according to user request.\n"
+                            f"CURRENT CODE:\n```latex\n{st.session_state['tikz_code']}\n```\n"
+                            f"REQUEST: {refine_input}\n"
+                            f"Return ONLY the updated code block ```latex ... ```."
+                        )
 
                         payload = [image_to_process, refine_prompt] if image_to_process is not None else [refine_prompt]
 
@@ -380,7 +354,7 @@ if api_key:
                                 else:
                                     st.error(f"❌ {render_err}")
                             else:
-                                st.error(f"❌ {err}")
+                                st.error(f"{err}")
                                 if hit_limit:
                                     run_cooldown_countdown(60, "Tự động đếm ngược khôi phục Quota Google API")
             else:
