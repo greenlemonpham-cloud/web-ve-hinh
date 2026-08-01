@@ -1,16 +1,5 @@
 import os
 import sys
-
-# Cấu hình UTF-8 an toàn cho cả Windows local và Streamlit Cloud Linux
-os.environ["PYTHONUTF8"] = "1"
-os.environ["PYTHONIOENCODING"] = "utf-8"
-
-if hasattr(sys.stdout, 'reconfigure'):
-    try:
-        sys.stdout.reconfigure(encoding='utf-8')
-    except Exception:
-        pass
-
 import io
 import re
 import time
@@ -153,9 +142,10 @@ def render_tikz(tikz_code: str, output_format: str = "png") -> tuple[bytes | Non
         return None, f"Lỗi kết nối Render: {e}"
 
 def generate_fast(client, contents_payload):
-    # Khóa cố định duy nhất 1 model chuẩn để tiết kiệm tối đa Quota API (1 lượt bấm = 1 request)
+    # Chỉ gọi đúng các Model chính thức chuẩn 100% để không lãng phí Quota
     fast_models = [
         "gemini-2.0-flash",
+        "gemini-1.5-flash",
     ]
 
     error_logs = []
