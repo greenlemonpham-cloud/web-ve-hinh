@@ -1,7 +1,7 @@
 import os
 import sys
 
-# 1. Ép Python sử dụng UTF-8 trên Windows
+# Cấu hình UTF-8 an toàn
 os.environ["PYTHONUTF8"] = "1"
 os.environ["PYTHONIOENCODING"] = "utf-8"
 
@@ -36,7 +36,7 @@ st.set_page_config(
 )
 
 st.title("AI Chuyển Đề Bài Hình Học Sang Hình Vẽ TikZ")
-st.markdown("Made by levu | Hiển thị chính xác Model AI xử lý thành công")
+st.markdown("Made by levu | Tối ưu hóa hạn mức API Key")
 
 # Khởi tạo Session State
 if "paste_key" not in st.session_state:
@@ -74,10 +74,8 @@ render_format = st.sidebar.selectbox(
     "Định dạng ảnh đầu ra:",
     options=["png", "svg"],
     index=0,
-    help="Chọn SVG để có chất lượng ảnh vector nét tuyệt đối"
 )
 
-# Nút Reset Session State thủ công
 if st.sidebar.button("Xóa bộ nhớ tạm (Reset App)", use_container_width=True):
     st.session_state["rendered_image"] = None
     st.session_state["tikz_code"] = ""
@@ -99,32 +97,8 @@ def get_gemini_client(key: str):
 # ==========================================
 # HÀM XỬ LÝ CHUỖI & API
 # ==========================================
-def clean_ascii_only(text: str) -> str:
-    """Loại bỏ triệt để tất cả ký tự emoji/biểu tượng không phải ASCII"""
-    if not isinstance(text, str):
-        return text
-    return text.encode('ascii', errors='ignore').decode('ascii')
-
-def run_cooldown_countdown(seconds: int = 60, message: str = "Đang chờ hồi hạn mức Quota từ Google"):
-    st.session_state["cooldown_until"] = time.time() + seconds
-    progress_bar = st.progress(1.0)
-    status_text = st.empty()
-    
-    for remaining in range(seconds, 0, -1):
-        percent = remaining / seconds
-        progress_bar.progress(percent)
-        status_text.warning(f"{message}: Còn lại {remaining} giây...")
-        time.sleep(1)
-        
-    progress_bar.empty()
-    status_text.success("Đã hết thời gian chờ! Bạn có thể bấm gửi lại ngay.")
-
 def clean_tikz_code(raw_text: str) -> str:
     if not raw_text:
-        return ""
-
-    # Xóa ngay nếu chuỗi chứa thông báo lỗi từ API
-    if any(err_word in raw_text for err_word in ["Lỗi", "Error", "404", "429", "RESOURCE_EXHAUSTED", "ascii"]):
         return ""
 
     match_codeblock = re.search(r"\x60{3}(?:latex|tikz)?\n(.*?)\x60{3}", raw_text, re.DOTALL)
@@ -179,42 +153,30 @@ def render_tikz(tikz_code: str, output_format: str = "png") -> tuple[bytes | Non
         return None, f"Lỗi kết nối Render: {e}"
 
 def generate_fast(client, contents_payload):
-    # Danh sách Model hoạt động ổn định
     fast_models = [
-        "gemini-2.5-flash",
         "gemini-2.0-flash",
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
     ]
 
     error_logs = []
     hit_rate_limit = False
 
-    # Lọc sạch toàn bộ chuỗi payload thành ASCII thuần túy trước khi gửi
-    sanitized_payload = []
-    for item in contents_payload:
-        if isinstance(item, str):
-            sanitized_payload.append(clean_ascii_only(item))
-        else:
-            sanitized_payload.append(item)
-
     for model_name in fast_models:
         try:
             response = client.models.generate_content(
                 model=model_name,
-                contents=sanitized_payload,
+                contents=contents_payload,
             )
             if response and hasattr(response, "text") and response.text:
                 return response.text, None, False, model_name
             else:
                 error_logs.append(f"- {model_name}: Phản hồi rỗng.")
         except Exception as e:
-            safe_err = clean_ascii_only(str(e))
-            if "429" in safe_err or "RESOURCE_EXHAUSTED" in safe_err:
+            err_msg = str(e)
+            if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
                 hit_rate_limit = True
-                error_logs.append(f"- {model_name}: Quá giới hạn lượt gọi (Free Quota 429).")
+                error_logs.append(f"- {model_name}: Đã dùng hết hạn mức Free Quota trong phút (429).")
             else:
-                error_logs.append(f"- {model_name}: {safe_err[:120]}")
+                error_logs.append(f"- {model_name}: {err_msg[:120]}")
             continue
 
     detailed_error = "\n".join(error_logs)
@@ -236,6 +198,7 @@ if api_key:
         with col_left:
             st.subheader("1. Đề bài Hình học")
             image_to_process = None
+            paste_result = None
 
             if HAS_PASTE_BUTTON:
                 st.markdown("**Dán nhanh từ bộ nhớ tạm:**")
@@ -245,8 +208,6 @@ if api_key:
                     text_color="#FFFFFF",
                     key=f"paste_btn_{st.session_state['paste_key']}",
                 )
-                if paste_result is not None and paste_result.image_data is not None:
-                    image_to_process = paste_result.image_data
                 st.markdown("---")
 
             uploaded_file = st.file_uploader(
@@ -254,16 +215,27 @@ if api_key:
                 type=["jpg", "jpeg", "png"],
                 key=f"uploader_{st.session_state['paste_key']}",
             )
-            if uploaded_file is not None and image_to_process is None:
+
+            # Ưu tiên 1: Tệp tải lên từ máy tính
+            if uploaded_file is not None:
                 try:
                     image_to_process = Image.open(uploaded_file)
                 except Exception:
-                    st.error("Không thể đọc định dạng ảnh này.")
+                    st.error("Không thể đọc định dạng ảnh từ tệp tải lên.")
+
+            # Ưu tiên 2: Ảnh dán từ bộ nhớ tạm (nếu không có tệp tải lên)
+            elif HAS_PASTE_BUTTON and paste_result is not None and getattr(paste_result, 'image_data', None) is not None:
+                try:
+                    raw_data = paste_result.image_data
+                    if isinstance(raw_data, bytes):
+                        image_to_process = Image.open(io.BytesIO(raw_data))
+                    elif isinstance(raw_data, Image.Image):
+                        image_to_process = raw_data
+                except Exception:
+                    st.error("Không thể đọc ảnh từ bộ nhớ tạm.")
 
             if image_to_process is not None:
                 try:
-                    if isinstance(image_to_process, bytes):
-                        image_to_process = Image.open(io.BytesIO(image_to_process))
                     if image_to_process.mode != "RGB":
                         image_to_process = image_to_process.convert("RGB")
                 except Exception:
@@ -313,8 +285,6 @@ if api_key:
                             else:
                                 st.error(f"{err}")
                                 st.session_state["tikz_code"] = ""
-                                if hit_limit:
-                                    run_cooldown_countdown(60, "Tự động đếm ngược khôi phục Quota Google API")
 
         with col_right:
             st.subheader("2. Kết quả Hình vẽ Minh họa")
@@ -355,11 +325,10 @@ if api_key:
                     elif not refine_input.strip():
                         st.warning("Vui lòng nhập yêu cầu cần chỉnh sửa.")
                     else:
-                        clean_input = clean_ascii_only(refine_input)
                         refine_prompt = (
                             f"Modify the following TikZ code according to user request.\n"
                             f"CURRENT CODE:\n```latex\n{st.session_state['tikz_code']}\n```\n"
-                            f"REQUEST: {clean_input}\n"
+                            f"REQUEST: {refine_input}\n"
                             f"Return ONLY the updated code block ```latex ... ```."
                         )
 
@@ -383,8 +352,6 @@ if api_key:
                                         st.error(f"{render_err}")
                             else:
                                 st.error(f"{err}")
-                                if hit_limit:
-                                    run_cooldown_countdown(60, "Tự động đếm ngược khôi phục Quota Google API")
             else:
                 st.info("Hãy dán hoặc tải ảnh đề bài ở cột bên trái.")
 else:
