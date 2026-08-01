@@ -1,5 +1,14 @@
-import base64
+import sys
 import io
+
+# Ép hệ thống Terminal/Python mã hóa UTF-8 để tránh lỗi ASCII trên Windows
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
+import base64
 import re
 import time
 import urllib.parse
@@ -102,6 +111,13 @@ def run_cooldown_countdown(seconds: int = 60, message: str = "Đang chờ hồi 
     status_text.success("✅ Đã hết thời gian chờ! Bạn có thể bấm gửi lại ngay.")
 
 def clean_tikz_code(raw_text: str) -> str:
+    if not raw_text:
+        return ""
+    
+    # Lọc bỏ nếu chuỗi trả về chứa thông báo lỗi thay vì mã TikZ
+    if "ascii" in raw_text or "RESOURCE_EXHAUSTED" in raw_text or "Chi tiết lỗi" in raw_text:
+        return ""
+
     match_codeblock = re.search(r"\x60{3}(?:latex|tikz)?\n(.*?)\x60{3}", raw_text, re.DOTALL)
     text = match_codeblock.group(1).strip() if match_codeblock else raw_text.strip()
 
@@ -117,11 +133,14 @@ def clean_tikz_code(raw_text: str) -> str:
         cleaned_lines.append(line)
 
     clean_body = "\n".join(cleaned_lines).strip()
-    if not clean_body.startswith("\\begin{tikzpicture}"):
+    if clean_body and not clean_body.startswith("\\begin{tikzpicture}"):
         clean_body = f"\\begin{{tikzpicture}}\n{clean_body}\n\\end{{tikzpicture}}"
     return clean_body
 
 def render_tikz(tikz_code: str, output_format: str = "png") -> tuple[bytes | None, str | None]:
+    if not tikz_code.strip():
+        return None, "Mã TikZ rỗng hoặc không hợp lệ."
+
     full_doc = f"""\\documentclass[tikz,border=5pt]{{standalone}}
 \\usepackage{{amsmath,amssymb}}
 \\usetikzlibrary{{calc,arrows,arrows.meta,intersections,shapes,patterns,angles,quotes}}
@@ -151,7 +170,6 @@ def render_tikz(tikz_code: str, output_format: str = "png") -> tuple[bytes | Non
         return None, f"Lỗi kết nối Render: {e}"
 
 def generate_fast(client, contents_payload):
-    # Danh sách model Gemini ổn định
     fast_models = [
         "gemini-2.5-flash",
         "gemini-2.5-pro",
@@ -161,26 +179,40 @@ def generate_fast(client, contents_payload):
     error_logs = []
     hit_rate_limit = False
 
+    # Chuyển đổi payload an toàn mã hóa UTF-8 tuyệt đối
+    clean_payload = []
+    for item in contents_payload:
+        if isinstance(item, str):
+            clean_str = item.encode("utf-8", errors="ignore").decode("utf-8")
+            clean_payload.append(clean_str)
+        else:
+            clean_payload.append(item)
+
     for model_name in fast_models:
         try:
             response = client.models.generate_content(
                 model=model_name,
-                contents=contents_payload,
+                contents=clean_payload,
             )
             if response and response.text:
-                # TRẢ VỀ THÊM TÊN MODEL KHI THÀNH CÔNG
                 return response.text, None, False, model_name
         except Exception as e:
-            err_msg = str(e)
+            try:
+                err_msg = str(e)
+            except Exception:
+                err_msg = repr(e)
+
             if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
                 hit_rate_limit = True
-                error_logs.append(f"• {model_name}: ⚠️ Đã vượt quá giới hạn lượt gọi trong phút (Free Quota).")
+                error_logs.append(f"- {model_name}: Đã vượt quá giới hạn lượt gọi trong phút (Rate Limit 429).")
             else:
-                error_logs.append(f"• {model_name}: {err_msg[:120]}")
+                # Format lỗi an toàn bằng ASCII thay thế để tránh làm văng app
+                safe_err_text = err_msg.encode("ascii", errors="replace").decode("ascii")
+                error_logs.append(f"- {model_name}: {safe_err_text[:120]}")
             continue
 
     detailed_error = "\n".join(error_logs)
-    return None, f"❌ AI chưa thể xử lý. Chi tiết lỗi từ Google API:\n{detailed_error}", hit_rate_limit, None
+    return None, f"AI chưa thể xử lý. Chi tiết lỗi từ Google API:\n{detailed_error}", hit_rate_limit, None
 
 # ==========================================
 # 5. LUỒNG XỬ LÝ CHÍNH
@@ -292,7 +324,6 @@ if api_key:
             st.subheader("2. Kết quả Hình vẽ Minh họa")
 
             if st.session_state["rendered_image"] is not None:
-                # HIỂN THỊ MODEL AI ĐÃ CHẠY NẰM Ở TRÊN KHU VỰC KẾT QUẢ
                 st.info(f"🤖 **Model AI đã xử lý:** `{st.session_state['used_model']}`")
 
                 st.image(
