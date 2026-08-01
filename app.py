@@ -1,7 +1,7 @@
 import os
 import sys
 
-# 1. Ép mã hóa UTF-8 toàn hệ thống trên Windows
+# 1. Ep Python su dung UTF-8 tren Windows
 os.environ["PYTHONUTF8"] = "1"
 os.environ["PYTHONIOENCODING"] = "utf-8"
 
@@ -20,7 +20,7 @@ from PIL import Image
 from google import genai
 import streamlit as st
 
-# Kiểm tra & tự động bắt lỗi nếu chưa cài streamlit-paste-button
+# Kiem tra thu vien paste button
 try:
     from streamlit_paste_button import paste_image_button
     HAS_PASTE_BUTTON = True
@@ -28,18 +28,17 @@ except ImportError:
     HAS_PASTE_BUTTON = False
 
 # ==========================================
-# CẤU HÌNH GIAO DIỆN STREAMLIT
+# CAU HINH GIAO DIEN STREAMLIT
 # ==========================================
 st.set_page_config(
-    page_title="Chuyển Ảnh Bài Toán Sang TikZ",
-    page_icon="📐",
+    page_title="Chuyen Anh Bai Toan Sang TikZ",
     layout="wide",
 )
 
-st.title("📐 AI Chuyển Đề Bài Hình Học Sang Hình Vẽ TikZ")
-st.markdown("Made by levu | **Hiển thị chính xác Model AI xử lý thành công**")
+st.title("AI Chuyen De Bai Hinh Hoc Sang Hinh Ve TikZ")
+st.markdown("Made by levu | Hien thi chinh xac Model AI xu ly thanh cong")
 
-# Khởi tạo Session State
+# Khoi tao Session State
 if "paste_key" not in st.session_state:
     st.session_state["paste_key"] = 0
 if "rendered_image" not in st.session_state:
@@ -54,16 +53,16 @@ if "used_model" not in st.session_state:
     st.session_state["used_model"] = ""
 
 # Sidebar
-st.sidebar.header("⚙️ Cấu hình Hệ thống")
+st.sidebar.header("Cau hinh He thong")
 
 if "user_api_key" not in st.session_state:
     st.session_state["user_api_key"] = ""
 
 input_key = st.sidebar.text_input(
-    "Nhập Gemini API Key của bạn:",
+    "Nhap Gemini API Key cua ban:",
     value=st.session_state["user_api_key"],
     type="password",
-    help="Copy mã API key từ Google AI Studio và dán vào đây",
+    help="Copy ma API key tu Google AI Studio va dan vao day",
 )
 
 if input_key:
@@ -72,27 +71,33 @@ if input_key:
 api_key = st.session_state["user_api_key"]
 
 render_format = st.sidebar.selectbox(
-    "🖼️ Định dạng ảnh đầu ra:",
+    "Dinh dang anh dau ra:",
     options=["png", "svg"],
     index=0,
-    help="Chọn SVG để có chất lượng ảnh vector nét tuyệt đối"
+    help="Chon SVG de co chat luong anh vector net tuyet doi"
 )
 
 current_now = time.time()
 if st.session_state["cooldown_until"] > current_now:
     remaining_secs = int(st.session_state["cooldown_until"] - current_now)
-    st.sidebar.warning(f"⏳ Cần chờ: **{remaining_secs} giây** để gửi yêu cầu tiếp theo.")
+    st.sidebar.warning(f"Can cho: {remaining_secs} giay de gui yeu cau tiep theo.")
 else:
-    st.sidebar.success("🟢 API Sẵn sàng sử dụng!")
+    st.sidebar.success("API San sang su dung!")
 
 @st.cache_resource
 def get_gemini_client(key: str):
     return genai.Client(api_key=key)
 
 # ==========================================
-# HÀM XỬ LÝ CHUỖI & API
+# HAM XU LY CHUOI & API
 # ==========================================
-def run_cooldown_countdown(seconds: int = 60, message: str = "Đang chờ hồi hạn mức Quota từ Google"):
+def clean_ascii_only(text: str) -> str:
+    """Loai bo triet de tat ca ky tu unicode / emoji khong phai ASCII"""
+    if not isinstance(text, str):
+        return text
+    return text.encode('ascii', errors='ignore').decode('ascii')
+
+def run_cooldown_countdown(seconds: int = 60, message: str = "Dang cho hoi han muc Quota tu Google"):
     st.session_state["cooldown_until"] = time.time() + seconds
     progress_bar = st.progress(1.0)
     status_text = st.empty()
@@ -100,11 +105,11 @@ def run_cooldown_countdown(seconds: int = 60, message: str = "Đang chờ hồi 
     for remaining in range(seconds, 0, -1):
         percent = remaining / seconds
         progress_bar.progress(percent)
-        status_text.warning(f"⏳ **{message}:** Còn lại **{remaining} giây**...")
+        status_text.warning(f"{message}: Con lai {remaining} giay...")
         time.sleep(1)
         
     progress_bar.empty()
-    status_text.success("✅ Đã hết thời gian chờ! Bạn có thể bấm gửi lại ngay.")
+    status_text.success("Da het thoi gian cho! Ban co the bam gui lai ngay.")
 
 def clean_tikz_code(raw_text: str) -> str:
     if not raw_text:
@@ -131,7 +136,7 @@ def clean_tikz_code(raw_text: str) -> str:
 
 def render_tikz(tikz_code: str, output_format: str = "png") -> tuple[bytes | None, str | None]:
     if not tikz_code.strip():
-        return None, "Mã TikZ không hợp lệ hoặc rỗng."
+        return None, "Loi: Ma TikZ khong hop le hoac rong."
 
     full_doc = f"""\\documentclass[tikz,border=5pt]{{standalone}}
 \\usepackage{{amsmath,amssymb}}
@@ -150,19 +155,19 @@ def render_tikz(tikz_code: str, output_format: str = "png") -> tuple[bytes | Non
         with urllib.request.urlopen(req, timeout=10) as response:
             if response.status == 200:
                 return response.read(), None
-            return None, f"Lỗi Kroki: HTTP {response.status}"
+            return None, f"Loi Kroki: HTTP {response.status}"
     except urllib.error.HTTPError as e:
         try:
             error_details = e.read().decode('utf-8', errors='ignore')
             clean_err = re.sub(r'<[^>]+>', '', error_details).strip()
-            return None, f"Lỗi cú pháp TikZ (HTTP {e.code}): {clean_err[:250]}"
+            return None, f"Loi cu phap TikZ (HTTP {e.code}): {clean_err[:250]}"
         except Exception:
-            return None, f"Lỗi biên dịch Kroki: HTTP {e.code}"
+            return None, f"Loi bien dich Kroki: HTTP {e.code}"
     except Exception as e:
-        return None, f"Lỗi kết nối Render: {e}"
+        return None, f"Loi ket noi Render: {e}"
 
 def generate_fast(client, contents_payload):
-    # Danh sách các Model chính thức chuẩn từ Google AI Studio
+    # Danh sach Model uu tien theo thu tu
     fast_models = [
         "gemini-2.5-flash",
         "gemini-2.5-pro",
@@ -181,44 +186,44 @@ def generate_fast(client, contents_payload):
                 model=model_name,
                 contents=contents_payload,
             )
-            # Kiểm tra xem response có nội dung trả về hay không
             if response and hasattr(response, "text") and response.text:
                 return response.text, None, False, model_name
             else:
-                error_logs.append(f"- {model_name}: Phản hồi rỗng (có thể do bộ lọc Safety từ chối).")
+                error_logs.append(f"- {model_name}: Phan hoi rong.")
         except Exception as e:
-            err_str = repr(e)  # Lấy đầy đủ thông tin exception
-            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+            # Clean sach chuoi exception thanh ASCII thuan tuy de tranh crash Windows
+            safe_err = clean_ascii_only(str(e))
+            if "429" in safe_err or "RESOURCE_EXHAUSTED" in safe_err:
                 hit_rate_limit = True
-                error_logs.append(f"- {model_name}: Quá giới hạn lượt gọi (Free Quota 429).")
+                error_logs.append(f"- {model_name}: Qua gioihan luot goi (Free Quota 429).")
             else:
-                error_logs.append(f"- {model_name}: {err_str[:150]}")
+                error_logs.append(f"- {model_name}: {safe_err[:120]}")
             continue
 
     detailed_error = "\n".join(error_logs)
-    return None, f"AI chưa thể xử lý. Chi tiết lỗi từ Google API:\n{detailed_error}", hit_rate_limit, None
+    return None, f"[Loi API Google]\n{detailed_error}", hit_rate_limit, None
 
 # ==========================================
-# LUỒNG XỬ LÝ GIAO DIỆN CHÍNH
+# LUONG XU LY GIAO DIEN CHINH
 # ==========================================
 if api_key:
     try:
         client = get_gemini_client(api_key.strip())
     except Exception as e:
-        st.error(f"Lỗi khởi tạo Gemini Client: {e}")
+        st.error(f"Loi khoi tao Gemini Client: {e}")
         client = None
 
     if client:
         col_left, col_right = st.columns(2)
 
         with col_left:
-            st.subheader("1. Đề bài Hình học")
+            st.subheader("1. De bai Hinh hoc")
             image_to_process = None
 
             if HAS_PASTE_BUTTON:
-                st.markdown("📋 **Dán nhanh từ bộ nhớ tạm:**")
+                st.markdown("**Dan nhanh tu bo nho tam:**")
                 paste_result = paste_image_button(
-                    label="📋 Bấm vào đây để Dán ảnh đã chụp",
+                    label="Bam vao day de Dan anh da chup",
                     background_color="#2563EB",
                     text_color="#FFFFFF",
                     key=f"paste_btn_{st.session_state['paste_key']}",
@@ -228,7 +233,7 @@ if api_key:
                 st.markdown("---")
 
             uploaded_file = st.file_uploader(
-                "Chọn tệp ảnh từ máy tính / Kéo thả vào đây:",
+                "Chon tep anh tu may tinh / Keo tha vao day:",
                 type=["jpg", "jpeg", "png"],
                 key=f"uploader_{st.session_state['paste_key']}",
             )
@@ -236,7 +241,7 @@ if api_key:
                 try:
                     image_to_process = Image.open(uploaded_file)
                 except Exception:
-                    st.error("Không thể đọc định dạng ảnh này.")
+                    st.error("Khong the doc dinh dang anh nay.")
 
             if image_to_process is not None:
                 try:
@@ -247,22 +252,21 @@ if api_key:
                 except Exception:
                     pass
 
-                st.image(image_to_process, caption="Ảnh đề bài đã sẵn sàng", use_container_width=True)
+                st.image(image_to_process, caption="Anh de bai da san sang", use_container_width=True)
 
-                if st.button("❌ Xóa ảnh", use_container_width=True):
+                if st.button("Xoa anh", use_container_width=True):
                     st.session_state["paste_key"] += 1
                     st.session_state["rendered_image"] = None
                     st.session_state["tikz_code"] = ""
                     st.session_state["used_model"] = ""
                     st.rerun()
 
-                if st.button("🚀 Chuyển đổi & Vẽ hình ngay", type="primary", use_container_width=True):
+                if st.button("Chuyen doi & Ve hinh ngay", type="primary", use_container_width=True):
                     now = time.time()
                     if st.session_state["cooldown_until"] > now:
                         wait_sec = int(st.session_state["cooldown_until"] - now)
-                        st.warning(f"⚠️ Vui lòng chờ hết thời gian đếm ngược ({wait_sec}s nữa).")
+                        st.warning(f"Vui long cho het thoi gian dem nguoc ({wait_sec}s nua).")
                     else:
-                        # Prompt tối giản, trực diện để tránh bị bộ lọc AI chặn
                         prompt = (
                             "Convert the geometry figure in this image into valid TikZ code.\n"
                             "Use \\documentclass[tikz, border=5mm]{standalone}.\n"
@@ -270,7 +274,7 @@ if api_key:
                             "Return ONLY the code block ```latex ... ``` without extra text."
                         )
 
-                        with st.spinner("⚡ AI đang phân tích và tạo hình..."):
+                        with st.spinner("AI dang phan tich va tao hinh..."):
                             generated_text, err, hit_limit, used_model = generate_fast(client, [image_to_process, prompt])
 
                             if generated_text:
@@ -282,28 +286,28 @@ if api_key:
                                 if img_bytes:
                                     st.session_state["rendered_image"] = img_bytes
                                     st.session_state["render_mime"] = "image/png" if render_format == "png" else "image/svg+xml"
-                                    st.success(f"⚡ Vẽ hình thành công! *(Model xử lý: **{used_model}**)*")
+                                    st.success(f"Ve hinh thanh cong! (Model xu ly: {used_model})")
                                 else:
-                                    st.error(f"❌ {render_err}")
+                                    st.error(f"{render_err}")
                             else:
                                 st.error(f"{err}")
                                 if hit_limit:
-                                    run_cooldown_countdown(60, "Tự động đếm ngược khôi phục Quota Google API")
+                                    run_cooldown_countdown(60, "Tu dong dem nguoc khoi phuc Quota Google API")
 
         with col_right:
-            st.subheader("2. Kết quả Hình vẽ Minh họa")
+            st.subheader("2. Ket qua Hinh ve Minh hoa")
 
             if st.session_state["rendered_image"] is not None:
-                st.info(f"🤖 **Model AI đã xử lý:** `{st.session_state['used_model']}`")
+                st.info(f"Model AI da xu ly: `{st.session_state['used_model']}`")
 
                 st.image(
                     st.session_state["rendered_image"], 
-                    caption=f"Hình vẽ TikZ kết quả ({render_format.upper()})", 
+                    caption=f"Hinh ve TikZ ket qua ({render_format.upper()})", 
                     use_container_width=True
                 )
                 
                 st.download_button(
-                    label=f"📥 Tải ảnh {render_format.upper()} về máy",
+                    label=f"Tai anh {render_format.upper()} ve may",
                     data=st.session_state["rendered_image"],
                     file_name=f"hinh_hoc_tikz.{render_format}",
                     mime=st.session_state["render_mime"],
@@ -311,23 +315,23 @@ if api_key:
                     use_container_width=True,
                 )
 
-                with st.expander("📝 Xem / Copy Mã TikZ"):
+                with st.expander("Xem / Copy Ma TikZ"):
                     st.code(st.session_state["tikz_code"], language="latex")
 
                 st.markdown("---")
-                st.markdown("### ✏️ Yêu cầu AI sửa hình vẽ này")
+                st.markdown("### Yeu cau AI sua hinh ve nay")
                 refine_input = st.text_input(
-                    "Nhập yêu cầu sửa (VD: Thêm đường cao AH nét đứt, Đổi điểm C thành C'):",
+                    "Nhap yeu cau sua (VD: Them duong cao AH net dut, Doi diem C thanh C'):",
                     key="refine_input_text"
                 )
                 
-                if st.button("✨ Cập nhật hình vẽ theo yêu cầu", type="secondary", use_container_width=True):
+                if st.button("Cap nhat hinh ve theo yeu cau", type="secondary", use_container_width=True):
                     now = time.time()
                     if st.session_state["cooldown_until"] > now:
                         wait_sec = int(st.session_state["cooldown_until"] - now)
-                        st.warning(f"⚠️ Vui lòng chờ hết thời gian đếm ngược ({wait_sec}s nữa).")
+                        st.warning(f"Vui long cho het thoi gian dem nguoc ({wait_sec}s nua).")
                     elif not refine_input.strip():
-                        st.warning("⚠️ Vui lòng nhập yêu cầu cần chỉnh sửa.")
+                        st.warning("Vui long nhap yeu cau can chinh sua.")
                     else:
                         refine_prompt = (
                             f"Modify the following TikZ code according to user request.\n"
@@ -338,7 +342,7 @@ if api_key:
 
                         payload = [image_to_process, refine_prompt] if image_to_process is not None else [refine_prompt]
 
-                        with st.spinner("⚡ AI đang cập nhật lại hình vẽ..."):
+                        with st.spinner("AI dang cap nhat lai hinh ve..."):
                             generated_text, err, hit_limit, used_model = generate_fast(client, payload)
                             if generated_text:
                                 new_tikz_code = clean_tikz_code(generated_text)
@@ -349,15 +353,15 @@ if api_key:
                                 if img_bytes:
                                     st.session_state["rendered_image"] = img_bytes
                                     st.session_state["render_mime"] = "image/png" if render_format == "png" else "image/svg+xml"
-                                    st.success(f"✨ Cập nhật hình vẽ thành công! *(Model xử lý: **{used_model}**)*")
+                                    st.success(f"Cap nhat hinh ve thanh cong! (Model xu ly: {used_model})")
                                     st.rerun()
                                 else:
-                                    st.error(f"❌ {render_err}")
+                                    st.error(f"{render_err}")
                             else:
                                 st.error(f"{err}")
                                 if hit_limit:
-                                    run_cooldown_countdown(60, "Tự động đếm ngược khôi phục Quota Google API")
+                                    run_cooldown_countdown(60, "Tu dong dem nguoc khoi phuc Quota Google API")
             else:
-                st.info("👈 Hãy dán hoặc tải ảnh đề bài ở cột bên trái.")
+                st.info("Hay dan hoac tai anh de bai o cot ben trai.")
 else:
-    st.warning("⚠️ Vui lòng nhập Gemini API Key ở thanh sidebar bên trái.")
+    st.warning("Vui long nhap Gemini API Key o thanh sidebar ben trai.")
