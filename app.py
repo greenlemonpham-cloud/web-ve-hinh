@@ -16,7 +16,7 @@ st.balloons()
 
 # The Rickroll Video (Autoplay enabled)
 # YouTube Embed URL for "Never Gonna Give You Up"
-rickroll_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=RDdQw4w9WgXcQ&start_radio=1"
+rickroll_url = "https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=1"
 
 # Embedding via HTML iframe ensures autoplay works smoothly
 st.components.v1.html(
